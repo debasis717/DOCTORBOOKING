@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://doctorbooking-r3mmalo5t-debasisp429-gmailcoms-projects.vercel.app/api/:path*"
+      "destination": "https://doctorbooking-zeta.vercel.app/api/:path*"
     },
     {
       "source": "/(.*)",
