@@ -208,6 +208,56 @@ function getUnavailablePeriod(doctor, date) {
     : ''
 }
 
+function getReportDateRange(request) {
+  const { from, to } = request.query
+
+  if (!isValidDateValue(from) || !isValidDateValue(to) || from > to) {
+    return null
+  }
+
+  return {
+    from,
+    to,
+    start: new Date(`${from}T00:00:00.000Z`),
+    end: new Date(`${to}T23:59:59.999Z`),
+  }
+}
+
+function getAppointmentSummary(appointments) {
+  const count = (status) => appointments.filter(
+    (appointment) => appointment.status === status,
+  ).length
+
+  return [
+    { label: 'Total appointments', value: appointments.length },
+    { label: 'Pending appointments', value: count('pending') },
+    { label: 'Confirmed appointments', value: count('confirmed') },
+    { label: 'Completed appointments', value: count('completed') },
+    { label: 'Cancelled appointments', value: count('cancelled') },
+    { label: 'Reschedule requests', value: count('reschedule_requested') },
+    { label: 'Rescheduled appointments', value: count('rescheduled') },
+    {
+      label: 'Rejected reschedule requests',
+      value: appointments.filter(
+        (appointment) => appointment.rescheduleRequest?.status === 'rejected',
+      ).length,
+    },
+  ]
+}
+
+function countByMonth(records, getDate) {
+  const counts = new Map()
+
+  for (const record of records) {
+    const month = getDate(record).slice(0, 7)
+    counts.set(month, (counts.get(month) || 0) + 1)
+  }
+
+  return [...counts.entries()]
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([month, count]) => ({ month, count }))
+}
+
 function createToken(user) {
   return jwt.sign(
     { id: user._id, role: user.role, name: user.name },
@@ -428,6 +478,156 @@ app.get(
   },
 )
 
+app.get(
+  '/api/admin/reports',
+  requireAuth,
+  requireRole('admin'),
+  async (request, response, next) => {
+    try {
+      const range = getReportDateRange(request)
+
+      if (!range) {
+        return response.status(400).json({
+          message: 'Choose a valid report start and end date.',
+        })
+      }
+
+      const [registrations, totalUsers, totalPatients, doctors, appointments] = await Promise.all([
+        User.find({ createdAt: { $gte: range.start, $lte: range.end } })
+          .select('name email role createdAt')
+          .sort({ createdAt: 1 }),
+        User.countDocuments(),
+        User.countDocuments({ role: 'patient' }),
+        Doctor.find().populate('user', 'email').sort({ name: 1 }),
+        Appointment.find({ date: { $gte: range.from, $lte: range.to } })
+          .sort({ date: 1, time: 1 }),
+      ])
+
+      const appointmentSummary = getAppointmentSummary(appointments)
+      const appointmentsByMonth = countByMonth(appointments, (appointment) => appointment.date)
+      const registrationsByMonth = countByMonth(
+        registrations,
+        (user) => new Date(user.createdAt).toISOString().slice(0, 10),
+      )
+      const doctorsByMonth = countByMonth(
+        registrations.filter((user) => user.role === 'doctor'),
+        (user) => new Date(user.createdAt).toISOString().slice(0, 10),
+      )
+      const monthlyCounts = new Map()
+
+      for (const month of appointmentsByMonth) {
+        monthlyCounts.set(month.month, {
+          month: month.month,
+          appointments: month.count,
+          registrations: 0,
+          doctors: 0,
+        })
+      }
+
+      for (const month of registrationsByMonth) {
+        const counts = monthlyCounts.get(month.month) || {
+          month: month.month,
+          appointments: 0,
+          registrations: 0,
+          doctors: 0,
+        }
+        counts.registrations = month.count
+        monthlyCounts.set(month.month, counts)
+      }
+
+      for (const month of doctorsByMonth) {
+        const counts = monthlyCounts.get(month.month) || {
+          month: month.month,
+          appointments: 0,
+          registrations: 0,
+          doctors: 0,
+        }
+        counts.doctors = month.count
+        monthlyCounts.set(month.month, counts)
+      }
+
+      const summary = [
+        { label: 'Total registered users', value: totalUsers },
+        { label: 'Registered patients', value: totalPatients },
+        { label: 'New registrations', value: registrations.length },
+        { label: 'Total doctors', value: doctors.length },
+        {
+          label: 'Available doctors',
+          value: doctors.filter((doctor) => doctor.availabilityStatus !== 'unavailable').length,
+        },
+        {
+          label: 'Unavailable doctors',
+          value: doctors.filter((doctor) => doctor.availabilityStatus === 'unavailable').length,
+        },
+        ...appointmentSummary,
+      ]
+
+      const doctorRows = doctors.map((doctor) => {
+        const doctorAppointments = appointments.filter(
+          (appointment) => String(appointment.doctor) === String(doctor._id),
+        )
+
+        return {
+          doctor: doctor.name,
+          specialty: doctor.specialty,
+          availability: doctor.availabilityStatus || 'available',
+          appointments: doctorAppointments.length,
+          completed: doctorAppointments.filter((appointment) => appointment.status === 'completed').length,
+          cancelled: doctorAppointments.filter((appointment) => appointment.status === 'cancelled').length,
+          rescheduled: doctorAppointments.filter((appointment) => appointment.status === 'rescheduled').length,
+        }
+      })
+
+      return response.json({
+        projectName: 'Doctor Booking System',
+        title: 'System Activity Report',
+        generatedAt: new Date().toISOString(),
+        from: range.from,
+        to: range.to,
+        summary,
+        tables: [
+          {
+            title: 'Registrations',
+            columns: ['Name', 'Email', 'Role', 'Registered'],
+            rows: registrations.map((user) => ({
+              name: user.name,
+              email: user.email,
+              role: user.role,
+              registered: user.createdAt.toISOString().slice(0, 10),
+            })),
+          },
+          {
+            title: 'Doctor appointment statistics',
+            columns: ['Doctor', 'Specialty', 'Availability', 'Appointments', 'Completed', 'Cancelled', 'Rescheduled'],
+            rows: doctorRows,
+          },
+          {
+            title: 'Appointments',
+            columns: ['Patient', 'Doctor', 'Specialty', 'Date', 'Time', 'Status'],
+            rows: appointments.map((appointment) => ({
+              patient: appointment.patientName,
+              doctor: appointment.doctorName,
+              specialty: appointment.specialty,
+              date: appointment.date,
+              time: appointment.time,
+              status: appointment.status,
+            })),
+          },
+          {
+            title: 'Monthly growth',
+            columns: ['Month', 'Appointments', 'Registrations', 'Doctor registrations'],
+            rows: [...monthlyCounts.values()].sort(
+              (first, second) => first.month.localeCompare(second.month),
+            ),
+          },
+        ],
+      })
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
 app.delete(
   '/api/admin/users/:userId',
   requireAuth,
@@ -505,6 +705,18 @@ app.patch(
       if (appointment.status === 'cancelled') {
         return response.status(409).json({
           message: 'This appointment has been cancelled.',
+        })
+      }
+
+      if (appointment.status === 'completed') {
+        return response.status(409).json({
+          message: 'Completed appointments cannot be changed.',
+        })
+      }
+
+      if (action === 'confirm' && appointment.status !== 'pending') {
+        return response.status(409).json({
+          message: 'Only pending appointments can be confirmed.',
         })
       }
 
@@ -768,6 +980,73 @@ app.delete(
   },
 )
 
+app.get(
+  '/api/reports/doctor',
+  requireAuth,
+  requireRole('doctor'),
+  async (request, response, next) => {
+    try {
+      const range = getReportDateRange(request)
+
+      if (!range) {
+        return response.status(400).json({
+          message: 'Choose a valid report start and end date.',
+        })
+      }
+
+      const doctor = await Doctor.findOne({ user: request.auth.id })
+
+      if (!doctor) {
+        return response.status(404).json({
+          message: 'Doctor profile not found.',
+        })
+      }
+
+      const appointments = await Appointment.find({
+        doctor: doctor._id,
+        date: { $gte: range.from, $lte: range.to },
+      }).sort({ date: 1, time: 1 })
+      const uniquePatients = new Set(
+        appointments.map((appointment) => String(appointment.patient)),
+      )
+      const monthly = countByMonth(appointments, (appointment) => appointment.date)
+
+      return response.json({
+        projectName: 'Doctor Booking System',
+        title: 'Doctor Appointment Report',
+        generatedAt: new Date().toISOString(),
+        from: range.from,
+        to: range.to,
+        summary: [
+          ...getAppointmentSummary(appointments),
+          { label: 'Unique patients', value: uniquePatients.size },
+        ],
+        tables: [
+          {
+            title: 'Appointment history',
+            columns: ['Date', 'Time', 'Patient', 'Specialty', 'Status', 'Reschedule request'],
+            rows: appointments.map((appointment) => ({
+              date: appointment.date,
+              time: appointment.time,
+              patient: appointment.patientName,
+              specialty: appointment.specialty,
+              status: appointment.status,
+              rescheduleRequest: appointment.rescheduleRequest?.status || 'none',
+            })),
+          },
+          {
+            title: 'Monthly appointment statistics',
+            columns: ['Month', 'Appointments'],
+            rows: monthly,
+          },
+        ],
+      })
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
 // -----------------------------------------------------------------------------
 // Appointment routes
 // -----------------------------------------------------------------------------
@@ -827,6 +1106,12 @@ app.patch(
         })
       }
 
+      if (appointment.status === 'completed') {
+        return response.status(409).json({
+          message: 'Completed appointments cannot be changed.',
+        })
+      }
+
       const { action, date, time } = request.body
 
       if (action === 'confirm') {
@@ -837,6 +1122,14 @@ app.patch(
         }
 
         appointment.status = 'confirmed'
+      } else if (action === 'complete') {
+        if (appointment.status !== 'confirmed' || appointment.date > getTodayValue()) {
+          return response.status(409).json({
+            message: 'Only confirmed appointments scheduled for today or earlier can be completed.',
+          })
+        }
+
+        appointment.status = 'completed'
       } else if (action === 'cancel') {
         if (appointment.rescheduleRequest?.status === 'pending') {
           appointment.rescheduleRequest.status = 'rejected'
@@ -923,7 +1216,7 @@ app.patch(
         })
       } else {
         return response.status(400).json({
-          message: 'Choose confirm, cancel, or reschedule.',
+          message: 'Choose confirm, complete, cancel, or reschedule.',
         })
       }
 

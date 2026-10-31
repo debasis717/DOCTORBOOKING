@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import './Auth.css'
 import './App.css'
 import AdminPanel from './AdminPanel.jsx'
+import ReportPanel from './ReportPanel.jsx'
 
 const today = new Date()
 const formatDateValue = (date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
@@ -61,6 +62,7 @@ const todayLabel = formatLongDate(today).toUpperCase()
 const appointmentStatusLabels = {
   pending: 'Pending',
   confirmed: 'Confirmed',
+  completed: 'Completed',
   reschedule_requested: 'Awaiting patient response',
   rescheduled: 'Rescheduled',
   cancelled: 'Cancelled',
@@ -154,10 +156,10 @@ function DoctorDashboard({
   const [rescheduleTime, setRescheduleTime] = useState(doctor?.slots[0] || '')
   const rescheduleTimes = getTimesForDate(doctor || {}, rescheduleDate || todayValue)
   const upcomingAppointments = appointments
-    .filter((appointment) => appointment.date >= todayValue && appointment.status !== 'cancelled')
+    .filter((appointment) => appointment.date >= todayValue && !['cancelled', 'completed'].includes(appointment.status))
     .sort((first, second) => first.date.localeCompare(second.date) || first.time.localeCompare(second.time))
   const historyAppointments = appointments
-    .filter((appointment) => appointment.date < todayValue || appointment.status === 'cancelled')
+    .filter((appointment) => appointment.date < todayValue || ['cancelled', 'completed'].includes(appointment.status))
     .sort((first, second) => second.date.localeCompare(first.date) || second.time.localeCompare(first.time))
 
   const updateDay = (weekday, changes) => {
@@ -261,8 +263,12 @@ function DoctorDashboard({
         <span>Reason: {appointment.rescheduleRequest.reason}</span>
         <span>The original appointment remains active until the patient responds.</span>
       </div>}
+      {isHistory && appointment.status === 'confirmed' && appointment.date <= todayValue && <div className="appointment-actions">
+        <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'complete')}>Mark completed</button>
+      </div>}
       {!isHistory && <div className="appointment-actions">
         {appointment.status === 'pending' && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'confirm')}>Confirm</button>}
+        {appointment.status === 'confirmed' && appointment.date <= todayValue && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'complete')}>Mark completed</button>}
         {['pending', 'confirmed', 'rescheduled'].includes(appointment.status) && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => {
           setReschedulingId(appointment._id)
           setRescheduleDate(appointment.date)
@@ -351,6 +357,7 @@ function DoctorDashboard({
           <div className="appointments-column">
             {error && <p className="auth-error" role="alert">{error}</p>}
             {actionError && <p className="auth-error" role="alert">{actionError}</p>}
+            <ReportPanel token={auth.token} endpoint="/api/reports/doctor" />
             <section className="appointments-panel">
               <div className="section-heading"><div><p className="eyebrow">YOUR SCHEDULE</p><h2>Upcoming appointments</h2></div><span className="appointment-count">{upcomingAppointments.length}</span></div>
               {upcomingAppointments.length ? upcomingAppointments.map((appointment) => renderAppointment(appointment)) : <p className="empty-state">No upcoming appointments.</p>}

@@ -51,6 +51,7 @@ const appointmentSchema = new mongoose.Schema({
     enum: [
       'pending',
       'confirmed',
+      'completed',
       'reschedule_requested',
       'rescheduled',
       'cancelled',

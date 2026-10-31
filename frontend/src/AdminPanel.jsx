@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './AdminPanel.css'
+import ReportPanel from './ReportPanel.jsx'
 
 const emptyDashboard = { stats: null, users: [], doctors: [], appointments: [] }
 
@@ -127,6 +128,7 @@ function AdminDashboard({ auth, onLogout }) {
     { id: 'users', label: 'Users' },
     { id: 'doctors', label: 'Doctors' },
     { id: 'appointments', label: 'Appointments' },
+    { id: 'reports', label: 'Generate Report' },
   ]
 
   return (
@@ -202,11 +204,12 @@ function AdminDashboard({ auth, onLogout }) {
                   <td><span className={`appointment-status status-${appointment.status}`}>{appointment.status}</span></td>
                   <td><div className="admin-row-actions">
                     {appointment.status === 'pending' && <button type="button" disabled={busyId === appointment._id} onClick={() => updateAppointment(appointment, 'confirm')}>Confirm</button>}
-                    {appointment.status !== 'cancelled' && <button className="admin-danger" type="button" disabled={busyId === appointment._id} onClick={() => updateAppointment(appointment, 'cancel')}>Cancel</button>}
+                    {!['cancelled', 'completed'].includes(appointment.status) && <button className="admin-danger" type="button" disabled={busyId === appointment._id} onClick={() => updateAppointment(appointment, 'cancel')}>Cancel</button>}
                   </div></td>
                 </tr>)}</tbody>
               </table></div>
             </section>}
+            {activeSection === 'reports' && <ReportPanel token={auth.token} endpoint="/api/admin/reports" />}
           </>}
         </main>
       </div>
