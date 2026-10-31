@@ -1,15 +1,27 @@
 import jwt from 'jsonwebtoken'
+import User from '../models/User.js'
 
-export function requireAuth(request, response, next) {
+export async function requireAuth(request, response, next) {
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, '')
   if (!token) return response.status(401).json({ message: 'Please log in first.' })
 
+  let payload
   try {
-    const { id, role, name } = jwt.verify(token, process.env.JWT_SECRET)
-    request.auth = { id, role, name }
-    next()
+    payload = jwt.verify(token, process.env.JWT_SECRET)
   } catch {
-    response.status(401).json({ message: 'Your session expired. Please log in again.' })
+    return response.status(401).json({ message: 'Your session expired. Please log in again.' })
+  }
+
+  try {
+    const user = await User.findById(payload.id).select('isActive')
+    if (!user || user.isActive === false) {
+      return response.status(403).json({ message: 'This account has been deactivated.' })
+    }
+
+    request.auth = { id: payload.id, role: payload.role, name: payload.name }
+    return next()
+  } catch (error) {
+    return next(error)
   }
 }
 

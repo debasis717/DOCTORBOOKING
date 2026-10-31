@@ -284,6 +284,7 @@ async function publicUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
+    isActive: user.isActive !== false,
     doctor,
   }
 }
@@ -423,6 +424,12 @@ app.post('/api/auth/login', async (request, response, next) => {
       })
     }
 
+    if (user.isActive === false) {
+      return response.status(403).json({
+        message: 'This account has been deactivated. Contact an administrator.',
+      })
+    }
+
     return response.json({
       token: createToken(user),
       user: await publicUser(user),
@@ -460,9 +467,9 @@ app.get(
     try {
       const [users, doctors, appointments] = await Promise.all([
         User.find()
-          .select('name email role createdAt')
+          .select('name email role isActive createdAt')
           .sort({ createdAt: -1 }),
-        Doctor.find().populate('user', 'name email').sort({ name: 1 }),
+        Doctor.find().populate('user', 'name email isActive').sort({ name: 1 }),
         Appointment.find().sort({ date: -1, time: -1 }),
       ])
 
@@ -635,6 +642,47 @@ app.get(
   },
 )
 
+app.patch(
+  '/api/admin/users/:userId/activation',
+  requireAuth,
+  requireRole('admin'),
+  async (request, response, next) => {
+    try {
+      if (!mongoose.isValidObjectId(request.params.userId)) {
+        return response.status(400).json({
+          message: 'Choose a valid user account.',
+        })
+      }
+
+      const { isActive } = request.body
+      if (typeof isActive !== 'boolean') {
+        return response.status(400).json({
+          message: 'Choose whether the account should be active.',
+        })
+      }
+
+      const user = await User.findById(request.params.userId)
+      if (!user || user.role === 'admin') {
+        return response.status(404).json({
+          message: 'User account not found.',
+        })
+      }
+
+      user.isActive = isActive
+      await user.save()
+      return response.json({
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+      })
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
 app.delete(
   '/api/admin/users/:userId',
   requireAuth,
@@ -751,10 +799,16 @@ app.patch(
 app.get('/api/doctors', async (request, response, next) => {
   try {
     const doctors = await Doctor.find()
-      .select('-user')
+      .populate('user', 'isActive')
       .sort({ name: 1 })
 
-    return response.json(doctors)
+    return response.json(doctors
+      .filter((doctor) => !doctor.user || doctor.user.isActive !== false)
+      .map((doctor) => {
+        const publicDoctor = doctor.toObject()
+        delete publicDoctor.user
+        return publicDoctor
+      }))
   } catch (error) {
     next(error)
   }
@@ -1443,6 +1497,15 @@ app.post(
         return response.status(404).json({
           message: 'Doctor not found.',
         })
+      }
+
+      if (doctor.user) {
+        const doctorAccount = await User.findById(doctor.user).select('isActive')
+        if (!doctorAccount || doctorAccount.isActive === false) {
+          return response.status(404).json({
+            message: 'Doctor not found.',
+          })
+        }
       }
 
       if (!isValidDateValue(date) || date < getTodayValue()) {

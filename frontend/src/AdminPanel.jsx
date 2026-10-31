@@ -114,6 +114,15 @@ function AdminDashboard({ auth, onLogout }) {
     await performAction(user._id, `/api/admin/users/${user._id}`, 'DELETE', null)
   }
 
+  const updateUserActivation = async (user) => {
+    await performAction(
+      user._id,
+      `/api/admin/users/${user._id}/activation`,
+      'PATCH',
+      { isActive: user.isActive === false },
+    )
+  }
+
   const updateAppointment = async (appointment, action) => {
     await performAction(
       appointment._id,
@@ -170,21 +179,28 @@ function AdminDashboard({ auth, onLogout }) {
             </section>}
             {activeSection === 'users' && <section className="admin-table-card">
               <div className="admin-section-heading"><h2>All accounts</h2><span>{dashboard.users.length} accounts</span></div>
-              <div className="admin-table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Action</th></tr></thead>
+              <div className="admin-table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Account status</th><th>Joined</th><th>Action</th></tr></thead>
                 <tbody>{dashboard.users.map((user) => <tr key={user._id}>
                   <td>{user.name}</td><td>{user.email}</td><td><span className={`admin-role role-${user.role}`}>{user.role}</span></td>
+                  <td><span className={`admin-account-status ${user.isActive === false ? 'inactive' : ''}`}>{user.isActive === false ? 'Inactive' : 'Active'}</span></td>
                   <td>{new Date(user.createdAt).toLocaleDateString()}</td>
-                  <td>{user.role === 'admin' ? <span className="admin-muted">Protected</span> : <button className="admin-danger" type="button" disabled={busyId === user._id} onClick={() => deleteUser(user)}>Delete</button>}</td>
+                  <td>{user.role === 'admin' ? <span className="admin-muted">Protected</span> : <div className="admin-row-actions">
+                    <button type="button" disabled={busyId === user._id} onClick={() => updateUserActivation(user)}>{user.isActive === false ? 'Activate' : 'Deactivate'}</button>
+                    <button className="admin-danger" type="button" disabled={busyId === user._id} onClick={() => deleteUser(user)}>Delete</button>
+                  </div>}</td>
                 </tr>)}</tbody>
               </table></div>
             </section>}
             {activeSection === 'doctors' && <section className="admin-table-card">
               <div className="admin-section-heading"><h2>Doctor directory</h2><span>{dashboard.doctors.length} doctors</span></div>
-              <div className="admin-table-wrap"><table><thead><tr><th>Doctor</th><th>Specialty</th><th>Account email</th><th>Experience</th><th>Booking status</th><th>Weekly schedule / time off</th></tr></thead>
+              <div className="admin-table-wrap"><table><thead><tr><th>Doctor</th><th>Specialty</th><th>Account email</th><th>Account status</th><th>Experience</th><th>Booking status</th><th>Weekly schedule / time off</th><th>Action</th></tr></thead>
                 <tbody>{dashboard.doctors.map((doctor) => <tr key={doctor._id}>
-                  <td>{doctor.name}</td><td>{doctor.specialty}</td><td>{doctor.user?.email || 'Managed profile'}</td><td>{doctor.experience}</td>
+                  <td>{doctor.name}</td><td>{doctor.specialty}</td><td>{doctor.user?.email || 'Managed profile'}</td>
+                  <td>{doctor.user ? <span className={`admin-account-status ${doctor.user.isActive === false ? 'inactive' : ''}`}>{doctor.user.isActive === false ? 'Inactive' : 'Active'}</span> : <span className="admin-muted">Managed profile</span>}</td>
+                  <td>{doctor.experience}</td>
                   <td>{doctor.availabilityStatus === 'unavailable' ? `Unavailable: ${doctor.availabilityStatusReason || 'No reason provided'}` : 'Available'}</td>
                   <td>{doctor.unavailabilityPeriods?.length ? doctor.unavailabilityPeriods.map((period) => `${period.startDate} to ${period.endDate}: ${period.reason}`).join('; ') : 'No scheduled time off'}</td>
+                  <td>{doctor.user && <button type="button" disabled={busyId === doctor.user._id} onClick={() => updateUserActivation({ _id: doctor.user._id, isActive: doctor.user.isActive })}>{doctor.user.isActive === false ? 'Activate account' : 'Deactivate account'}</button>}</td>
                 </tr>)}</tbody>
               </table></div>
             </section>}
