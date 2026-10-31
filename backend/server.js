@@ -32,6 +32,13 @@ const unavailabilityReasons = [
   'Technical Issue',
   'Other',
 ]
+const patientCancellationReasons = [
+  'Scheduling conflict',
+  'Feeling better',
+  'Need a different appointment time',
+  'Unable to attend',
+  'Other',
+]
 
 const starterDoctors = [
   {
@@ -1336,6 +1343,77 @@ app.patch(
       }
 
       proposal.respondedAt = new Date()
+      await appointment.save()
+
+      return response.json(appointment)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+app.patch(
+  '/api/appointments/:appointmentId/patient-cancel',
+  requireAuth,
+  requireRole('patient'),
+  async (request, response, next) => {
+    try {
+      if (!mongoose.isValidObjectId(request.params.appointmentId)) {
+        return response.status(400).json({
+          message: 'Choose a valid appointment.',
+        })
+      }
+
+      const appointment = await Appointment.findOne({
+        _id: request.params.appointmentId,
+        patient: request.auth.id,
+      })
+
+      if (!appointment) {
+        return response.status(404).json({
+          message: 'Appointment not found.',
+        })
+      }
+
+      if (
+        !['pending', 'confirmed', 'rescheduled', 'reschedule_requested']
+          .includes(appointment.status) ||
+        appointment.date < getTodayValue()
+      ) {
+        return response.status(409).json({
+          message: 'This appointment can no longer be cancelled.',
+        })
+      }
+
+      const reason = typeof request.body.reason === 'string'
+        ? request.body.reason.trim()
+        : ''
+      const details = typeof request.body.details === 'string'
+        ? request.body.details.trim()
+        : ''
+
+      if (
+        !patientCancellationReasons.includes(reason) ||
+        details.length > 450
+      ) {
+        return response.status(400).json({
+          message: 'Choose a cancellation reason and keep additional details under 450 characters.',
+        })
+      }
+
+      if (appointment.rescheduleRequest?.status === 'pending') {
+        appointment.rescheduleRequest.status = 'rejected'
+        appointment.rescheduleRequest.respondedAt = new Date()
+      }
+
+      appointment.status = 'cancelled'
+      appointment.history.push({
+        action: 'patient_cancelled',
+        actor: request.auth.id,
+        reason: details ? `${reason}: ${details}` : reason,
+        date: appointment.date,
+        time: appointment.time,
+      })
       await appointment.save()
 
       return response.json(appointment)

@@ -195,6 +195,9 @@ function AdminDashboard({ auth, onLogout }) {
                   <td>{appointment.patientName}</td><td>{appointment.doctorName}</td><td>{appointment.specialty}</td>
                   <td>
                     {appointment.date} at {appointment.time}
+                    {appointment.history?.find((entry) => entry.action === 'patient_cancelled') && <small className="admin-reschedule-detail">
+                      Patient cancellation reason: {appointment.history.find((entry) => entry.action === 'patient_cancelled').reason}
+                    </small>}
                     {appointment.rescheduleRequest && <small className="admin-reschedule-detail">
                       {appointment.rescheduleRequest.status === 'pending' ? 'Awaiting patient response' : `Request ${appointment.rescheduleRequest.status}`}
                       : {appointment.rescheduleRequest.proposedDate} at {appointment.rescheduleRequest.proposedTime}

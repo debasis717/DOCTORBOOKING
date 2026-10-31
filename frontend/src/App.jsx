@@ -18,6 +18,13 @@ const unavailabilityReasons = [
   'Technical Issue',
   'Other',
 ]
+const patientCancellationReasons = [
+  'Scheduling conflict',
+  'Feeling better',
+  'Need a different appointment time',
+  'Unable to attend',
+  'Other',
+]
 const createDateSelection = (date) => {
   return {
     day: new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date).toUpperCase(),
@@ -351,9 +358,12 @@ function DoctorDashboard({
   )
 }
 
-function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRespondToReschedule }) {
+function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRespondToReschedule, onCancelAppointment }) {
   const [busyAppointment, setBusyAppointment] = useState('')
   const [actionError, setActionError] = useState('')
+  const [cancellationId, setCancellationId] = useState('')
+  const [cancellationReason, setCancellationReason] = useState('')
+  const [cancellationDetails, setCancellationDetails] = useState('')
   const orderedAppointments = [...appointments].sort((first, second) =>
     first.date.localeCompare(second.date) || first.time.localeCompare(second.time))
 
@@ -362,6 +372,25 @@ function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRes
     setActionError('')
     try {
       await onRespondToReschedule(appointmentId, action)
+    } catch (requestError) {
+      setActionError(requestError.message)
+    } finally {
+      setBusyAppointment('')
+    }
+  }
+
+  const cancelAppointment = async (event, appointmentId) => {
+    event.preventDefault()
+    setBusyAppointment(appointmentId)
+    setActionError('')
+    try {
+      await onCancelAppointment(appointmentId, {
+        reason: cancellationReason,
+        details: cancellationDetails,
+      })
+      setCancellationId('')
+      setCancellationReason('')
+      setCancellationDetails('')
     } catch (requestError) {
       setActionError(requestError.message)
     } finally {
@@ -387,6 +416,9 @@ function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRes
           {orderedAppointments.length ? orderedAppointments.map((appointment) => {
             const proposalPending = appointment.status === 'reschedule_requested'
               && appointment.rescheduleRequest?.status === 'pending'
+            const cancellation = appointment.history
+              ?.filter((entry) => entry.action === 'patient_cancelled')
+              .at(-1)
             return (
               <article className="appointment-row patient-appointment-row" key={appointment._id}>
                 <div className="appointment-person">
@@ -406,7 +438,27 @@ function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRes
                     <button type="button" disabled={busyAppointment === appointment._id} onClick={() => respondToReschedule(appointment._id, 'reject')}>Reject proposal</button>
                   </div>
                 </div>}
+                {appointment.status === 'cancelled' && cancellation?.reason && <p className="appointment-history-note">Cancellation reason: {cancellation.reason}</p>}
                 {appointment.status !== 'cancelled' && appointment.rescheduleRequest?.status === 'rejected' && <p className="appointment-history-note">The proposed time was rejected. Your original appointment remains active.</p>}
+                {['pending', 'confirmed', 'rescheduled', 'reschedule_requested'].includes(appointment.status) && appointment.date >= getCurrentDateValue() && <>
+                  {cancellationId === appointment._id ? <form className="patient-cancel-form" onSubmit={(event) => cancelAppointment(event, appointment._id)}>
+                    <label>Reason for cancelling<select value={cancellationReason} onChange={(event) => setCancellationReason(event.target.value)} required>
+                      <option value="">Select a reason</option>
+                      {patientCancellationReasons.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                    </select></label>
+                    <label>Additional details (optional)<textarea value={cancellationDetails} onChange={(event) => setCancellationDetails(event.target.value)} maxLength={450} /></label>
+                    <div className="patient-reschedule-actions">
+                      <button type="submit" disabled={busyAppointment === appointment._id}>{busyAppointment === appointment._id ? 'Cancelling...' : 'Confirm cancellation'}</button>
+                      <button type="button" disabled={busyAppointment === appointment._id} onClick={() => setCancellationId('')}>Keep appointment</button>
+                    </div>
+                  </form> : <div className="patient-reschedule-actions">
+                    <button type="button" disabled={busyAppointment === appointment._id} onClick={() => {
+                      setCancellationId(appointment._id)
+                      setCancellationReason('')
+                      setCancellationDetails('')
+                    }}>Cancel appointment</button>
+                  </div>}
+                </>}
               </article>
             )
           }) : <p className="empty-state">You do not have any appointments yet.</p>}
@@ -669,6 +721,19 @@ function App() {
       : current)
   }
 
+  const cancelPatientAppointment = async (appointmentId, cancellation) => {
+    const response = await fetch(`/api/appointments/${appointmentId}/patient-cancel`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + auth.token },
+      body: JSON.stringify(cancellation),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not cancel appointment.')
+    setAppointmentData((current) => current.userId === auth.user.id
+      ? { ...current, records: current.records.map((appointment) => appointment._id === result._id ? result : appointment) }
+      : current)
+  }
+
   if (window.location.pathname.replace(/\/$/, '') === '/admin') {
     return (
       <AdminPanel
@@ -691,7 +756,7 @@ function App() {
   }
 
   if (auth?.user?.role === 'patient' && showPatientDashboard) {
-    return <PatientDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onBrowse={() => setShowPatientDashboard(false)} onRespondToReschedule={respondToReschedule} />
+    return <PatientDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onBrowse={() => setShowPatientDashboard(false)} onRespondToReschedule={respondToReschedule} onCancelAppointment={cancelPatientAppointment} />
   }
 
   if (!selectedDoctor) {

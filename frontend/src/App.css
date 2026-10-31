@@ -75,6 +75,11 @@ main { padding: 0 6%; }.welcome-section { display: flex; align-items: end; justi
 .patient-reschedule-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .patient-reschedule-actions button { min-height: 34px; padding: 0 12px; border: 1px solid #cfe0d8; border-radius: 5px; background: white; color: var(--green); font-size: 11px; font-weight: 700; }
 .patient-reschedule-actions button:disabled { opacity: .6; cursor: wait; }
+.patient-cancel-form { display: grid; gap: 10px; grid-column: 1 / -1; padding: 12px; border: 1px solid #f0d4cf; border-radius: 6px; background: #fff8f6; }
+.patient-cancel-form label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+.patient-cancel-form select, .patient-cancel-form textarea { min-height: 36px; padding: 8px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); font: inherit; }
+.patient-cancel-form textarea { min-height: 64px; resize: vertical; }
+.patient-cancel-form .patient-reschedule-actions button:first-child { border-color: #f0d4cf; background: #fff8f6; color: #9c352e; }
 .appointment-history-note { grid-column: 1 / -1; margin: 0; }
 .history-panel { margin-top: 36px; }
 @media (max-width: 480px) { .appointment-row { gap: 10px; }.reschedule-form label { flex: 1 1 120px; } }
