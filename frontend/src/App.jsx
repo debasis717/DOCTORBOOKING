@@ -49,6 +49,13 @@ const getWeekdayFromValue = (dateValue) => {
   const [year, month, date] = dateValue.split('-').map(Number)
   return weekdays[new Date(year, month - 1, date).getDay()]
 }
+const getTimeGreeting = (date = new Date()) => {
+  const hour = date.getHours()
+  if (hour >= 5 && hour < 12) return 'Good morning'
+  if (hour >= 12 && hour < 17) return 'Good afternoon'
+  if (hour >= 17 && hour < 21) return 'Good evening'
+  return 'Good night'
+}
 const findNextAvailableDate = (doctor) => {
   for (let offset = 0; offset < 14; offset += 1) {
     const date = new Date(today)
@@ -425,12 +432,19 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(() => createDateSelection(today))
   const [visibleMonth, setVisibleMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
   const [selectedTimeValue, setSelectedTime] = useState('')
+  const [greeting, setGreeting] = useState(getTimeGreeting)
   const selectedDoctor = selectedDoctorState
     ? { ...selectedDoctorState, slots: getTimesForDate(selectedDoctorState, selectedDate.value) }
     : null
   const selectedTime = selectedDoctor?.slots.includes(selectedTimeValue) ? selectedTimeValue : selectedDoctor?.slots[0] || ''
   const [booked, setBookedState] = useState(false)
   const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    const updateGreeting = () => setGreeting(getTimeGreeting())
+    const intervalId = setInterval(updateGreeting, 60_000)
+    return () => clearInterval(intervalId)
+  }, [])
 
   useEffect(() => {
     fetch('/api/doctors')
@@ -688,7 +702,7 @@ function App() {
     <div className="app-shell">
       <header className="topbar"><a className="brand" href="#top"><span className="brand-mark">+</span><span>DocBook</span></a><nav className="main-nav"><a className="active" href="#find-doctor">Find a doctor</a><a href="#appointments">My appointments</a><a href="#help">Help center</a></nav>{auth?.user?.role === 'patient' && <button className="profile-button" type="button" onClick={() => setShowPatientDashboard(true)}>My appointments</button>}<button className="profile-button" type="button" onClick={() => auth ? logout() : openAuth()}>{auth ? 'Log out' : 'Log in / Sign up'}</button></header>
       <main id="top">
-        <section className="welcome-section" id="find-doctor"><div><p className="eyebrow">{todayLabel}</p><h1>Good morning<span>.</span></h1><p className="intro">Find the right care for you today.</p></div><div className="trust-note"><span className="shield">✓</span> Your health, handled with care</div></section>
+        <section className="welcome-section" id="find-doctor"><div><p className="eyebrow">{todayLabel}</p><h1>{greeting}<span>.</span></h1><p className="intro">Find the right care for you today.</p></div><div className="trust-note"><span className="shield">✓</span> Your health, handled with care</div></section>
         <section className="search-panel"><div className="search-label">What kind of care do you need?</div><div className="search-row"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search doctors or specialties" aria-label="Search doctors or specialties" /></label><button className="location-button" type="button"><span>⌖</span> India <b>⌄</b></button><button className="search-button" type="button" onClick={() => document.querySelector('.doctor-grid')?.scrollIntoView({ behavior: 'smooth' })}>Search <span>→</span></button></div><div className="quick-links"><span>Popular:</span> <button type="button" onClick={() => setQuery('General physician')}>General physician</button><button type="button" onClick={() => setQuery('Dermatologist')}>Dermatology</button><button type="button" onClick={() => setQuery('Pediatrician')}>Pediatrics</button></div></section>
         <section className="content-section"><div className="section-heading"><div><p className="eyebrow">AVAILABLE TODAY</p><h2>Recommended for you</h2></div><button className="view-all" type="button" onClick={() => setQuery('')}>View all doctors <span>→</span></button></div><div className="doctor-grid">{filteredDoctors.length ? filteredDoctors.map((doctor) => <article className={`doctor-card ${selectedDoctor.id === doctor.id ? 'selected' : ''}`} key={doctor.id}><div className="doctor-top"><div className={`avatar ${doctor.color}`}>{doctor.initials}</div><div className="doctor-meta"><h3>{doctor.name}</h3><p>{doctor.specialty}</p><span className="verified">{doctor.availabilityStatus === 'unavailable' ? 'Bookings paused' : '✓ Verified'}</span></div><span className="favorite">♡</span></div><div className="doctor-stats"><span>★ <b>{doctor.rating}</b></span><span>{doctor.experience}</span><span>{doctor.patients}</span></div><div className="card-divider" /><p className="next-available"><span /> Next available <b>today</b></p><button className="select-doctor" type="button" onClick={() => chooseDoctor(doctor)}>{selectedDoctor.id === doctor.id ? 'Selected' : 'Choose doctor'} <span>→</span></button></article>) : <p className="empty-state">No doctors found. Try another search.</p>}</div></section>
         <section className="booking-section" id="appointments"><div className="booking-header"><div><p className="eyebrow">BOOK AN APPOINTMENT</p><h2>Choose a convenient time</h2></div><span className="step-count">Step 2 of 2</span></div><div className="booking-layout"><div className="booking-options"><div className="option-block"><h3>Pick a date</h3><div className="calendar-picker"><div className="calendar-header"><button type="button" aria-label="Previous month" disabled={!canGoToPreviousMonth} onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>‹</button><strong>{monthLabel}</strong><button type="button" aria-label="Next month" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))}>›</button></div><div className="calendar-grid" role="group" aria-label={monthLabel}><div className="calendar-weekday" aria-hidden="true">Sun</div><div className="calendar-weekday" aria-hidden="true">Mon</div><div className="calendar-weekday" aria-hidden="true">Tue</div><div className="calendar-weekday" aria-hidden="true">Wed</div><div className="calendar-weekday" aria-hidden="true">Thu</div><div className="calendar-weekday" aria-hidden="true">Fri</div><div className="calendar-weekday" aria-hidden="true">Sat</div>{Array.from({ length: monthOffset }, (_, index) => <span className="calendar-empty" key={`empty-${index}`} />)}        {monthDates.map((date) => <button className={`calendar-date ${selectedDate.value === date.value ? 'chosen' : ''}`} type="button" key={date.value} disabled={date.value < formatDateValue(today) || !getTimesForDate(selectedDoctorState, date.value).length} aria-label={date.fullDate} aria-pressed={selectedDate.value === date.value} onClick={() => { setSelectedDate(date); setBooked(false) }}>{date.date}</button>)}</div></div></div><div className="option-block"><h3>Available times for {selectedDate.fullDate}</h3><div className="time-list">{selectedDoctor.slots.map((time) => <button className={`time-option ${selectedTime === time ? 'chosen' : ''}`} type="button" key={time} onClick={() => { setSelectedTime(time); setBooked(false) }}>{time}</button>)}</div></div></div><aside className="summary-card"><p className="eyebrow">YOUR VISIT</p><div className="summary-doctor"><div className={`avatar small ${selectedDoctor.color}`}>{selectedDoctor.initials}</div><div><h3>{selectedDoctor.name}</h3><p>{selectedDoctor.specialty}</p></div></div><div className="summary-line"><span>Appointment</span><b>{selectedDate.fullDate}</b></div><div className="summary-line"><span>Time</span><b>{selectedTime}</b></div><button className="confirm-button" type="button" onClick={() => setBooked(true)}>{booked ? 'Appointment confirmed ✓' : 'Confirm appointment'} <span>→</span></button>{booked && <p className="confirmation">You’re all set. We’ll send a reminder to your email.</p>}</aside></div></section>
