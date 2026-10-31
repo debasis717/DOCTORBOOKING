@@ -178,9 +178,11 @@ function AdminDashboard({ auth, onLogout }) {
             </section>}
             {activeSection === 'doctors' && <section className="admin-table-card">
               <div className="admin-section-heading"><h2>Doctor directory</h2><span>{dashboard.doctors.length} doctors</span></div>
-              <div className="admin-table-wrap"><table><thead><tr><th>Doctor</th><th>Specialty</th><th>Account email</th><th>Experience</th></tr></thead>
+              <div className="admin-table-wrap"><table><thead><tr><th>Doctor</th><th>Specialty</th><th>Account email</th><th>Experience</th><th>Booking status</th><th>Weekly schedule / time off</th></tr></thead>
                 <tbody>{dashboard.doctors.map((doctor) => <tr key={doctor._id}>
                   <td>{doctor.name}</td><td>{doctor.specialty}</td><td>{doctor.user?.email || 'Managed profile'}</td><td>{doctor.experience}</td>
+                  <td>{doctor.availabilityStatus === 'unavailable' ? `Unavailable: ${doctor.availabilityStatusReason || 'No reason provided'}` : 'Available'}</td>
+                  <td>{doctor.unavailabilityPeriods?.length ? doctor.unavailabilityPeriods.map((period) => `${period.startDate} to ${period.endDate}: ${period.reason}`).join('; ') : 'No scheduled time off'}</td>
                 </tr>)}</tbody>
               </table></div>
             </section>}

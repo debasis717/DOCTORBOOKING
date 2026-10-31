@@ -24,6 +24,15 @@ const weekDays = [
   'Saturday',
 ]
 
+const unavailabilityReasons = [
+  'Personal Emergency',
+  'Medical Emergency',
+  'On Leave',
+  'Hospital Duty',
+  'Technical Issue',
+  'Other',
+]
+
 const starterDoctors = [
   {
     name: 'Dr. Maya Patel',
@@ -183,6 +192,20 @@ function getTimesForDay(doctor, day) {
   }
 
   return doctor.availableDays.includes(day) ? doctor.slots : []
+}
+
+function getUnavailablePeriod(doctor, date) {
+  if (doctor.availabilityStatus === 'unavailable') {
+    return doctor.availabilityStatusReason || 'This doctor is not accepting appointments.'
+  }
+
+  const period = doctor.unavailabilityPeriods?.find(
+    (entry) => date >= entry.startDate && date <= entry.endDate,
+  )
+
+  return period
+    ? `This doctor is unavailable: ${period.reason}.`
+    : ''
 }
 
 function createToken(user) {
@@ -604,6 +627,147 @@ app.put(
   },
 )
 
+app.put(
+  '/api/doctors/availability/status',
+  requireAuth,
+  requireRole('doctor'),
+  async (request, response, next) => {
+    try {
+      const { status } = request.body
+      const reason = typeof request.body.reason === 'string'
+        ? request.body.reason.trim()
+        : ''
+
+      if (!['available', 'unavailable'].includes(status)) {
+        return response.status(400).json({
+          message: 'Choose available or unavailable.',
+        })
+      }
+
+      if (
+        status === 'unavailable' &&
+        (!unavailabilityReasons.includes(reason) || reason.length > 500)
+      ) {
+        return response.status(400).json({
+          message: 'Choose a valid reason when pausing bookings.',
+        })
+      }
+
+      const doctor = await Doctor.findOne({ user: request.auth.id })
+
+      if (!doctor) {
+        return response.status(404).json({
+          message: 'Doctor profile not found.',
+        })
+      }
+
+      doctor.availabilityStatus = status
+      doctor.availabilityStatusReason = status === 'unavailable' ? reason : ''
+      await doctor.save()
+
+      return response.json(doctor)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+app.post(
+  '/api/doctors/unavailability',
+  requireAuth,
+  requireRole('doctor'),
+  async (request, response, next) => {
+    try {
+      const { startDate, endDate, reason } = request.body
+      const explanation = typeof request.body.explanation === 'string'
+        ? request.body.explanation.trim()
+        : ''
+
+      if (
+        !isValidDateValue(startDate) ||
+        !isValidDateValue(endDate) ||
+        startDate < getTodayValue() ||
+        endDate < startDate ||
+        !unavailabilityReasons.includes(reason) ||
+        (request.body.explanation !== undefined && typeof request.body.explanation !== 'string') ||
+        explanation.length > 500
+      ) {
+        return response.status(400).json({
+          message: 'Choose a valid future date range, reason, and explanation of at most 500 characters.',
+        })
+      }
+
+      const doctor = await Doctor.findOne({ user: request.auth.id })
+
+      if (!doctor) {
+        return response.status(404).json({
+          message: 'Doctor profile not found.',
+        })
+      }
+
+      const overlaps = doctor.unavailabilityPeriods.some(
+        (period) => startDate <= period.endDate && endDate >= period.startDate,
+      )
+
+      if (overlaps) {
+        return response.status(409).json({
+          message: 'This date range overlaps an existing unavailability period.',
+        })
+      }
+
+      doctor.unavailabilityPeriods.push({
+        startDate,
+        endDate,
+        reason,
+        explanation,
+      })
+      await doctor.save()
+
+      return response.status(201).json(doctor)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+app.delete(
+  '/api/doctors/unavailability/:periodId',
+  requireAuth,
+  requireRole('doctor'),
+  async (request, response, next) => {
+    try {
+      if (!mongoose.isValidObjectId(request.params.periodId)) {
+        return response.status(400).json({
+          message: 'Choose a valid unavailability period.',
+        })
+      }
+
+      const doctor = await Doctor.findOne({ user: request.auth.id })
+
+      if (!doctor) {
+        return response.status(404).json({
+          message: 'Doctor profile not found.',
+        })
+      }
+
+      const period = doctor.unavailabilityPeriods.id(request.params.periodId)
+
+      if (!period) {
+        return response.status(404).json({
+          message: 'Unavailability period not found.',
+        })
+      }
+
+      period.deleteOne()
+      await doctor.save()
+
+      return response.json(doctor)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
 // -----------------------------------------------------------------------------
 // Appointment routes
 // -----------------------------------------------------------------------------
@@ -701,6 +865,14 @@ app.patch(
         ) {
           return response.status(400).json({
             message: 'Choose a future time different from the current appointment and provide a reason of at most 500 characters.',
+          })
+        }
+
+        const unavailableReason = getUnavailablePeriod(doctor, date)
+
+        if (unavailableReason) {
+          return response.status(409).json({
+            message: unavailableReason,
           })
         }
 
@@ -817,14 +989,17 @@ app.patch(
           })
         }
 
+        const unavailableReason = getUnavailablePeriod(doctor, proposal.proposedDate)
+
         if (
           !isValidDateValue(proposal.proposedDate) ||
           proposal.proposedDate < getTodayValue() ||
+          unavailableReason ||
           !getTimesForDay(doctor, getWeekDay(proposal.proposedDate))
             .includes(proposal.proposedTime)
         ) {
           return response.status(409).json({
-            message: 'The proposed time is no longer available. Ask the doctor for another time.',
+            message: unavailableReason || 'The proposed time is no longer available. Ask the doctor for another time.',
           })
         }
 
@@ -902,6 +1077,14 @@ app.post(
       if (!isValidDateValue(date) || date < getTodayValue()) {
         return response.status(400).json({
           message: 'Choose a valid future appointment date.',
+        })
+      }
+
+      const unavailableReason = getUnavailablePeriod(doctor, date)
+
+      if (unavailableReason) {
+        return response.status(409).json({
+          message: unavailableReason,
         })
       }
 

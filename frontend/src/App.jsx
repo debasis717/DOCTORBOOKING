@@ -9,6 +9,14 @@ const formatLongDate = (date) => new Intl.DateTimeFormat('en-US', {
   weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
 }).format(date)
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const unavailabilityReasons = [
+  'Personal Emergency',
+  'Medical Emergency',
+  'On Leave',
+  'Hospital Duty',
+  'Technical Issue',
+  'Other',
+]
 const createDateSelection = (date) => {
   return {
     day: new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date).toUpperCase(),
@@ -23,6 +31,11 @@ const getTimesForDay = (doctor, weekday) => {
     return doctor.weeklyAvailability.find((schedule) => schedule.day === weekday)?.times || []
   }
   return doctor.availableDays?.includes(weekday) ? doctor.slots || [] : []
+}
+const getTimesForDate = (doctor, dateValue) => {
+  const unavailable = doctor.availabilityStatus === 'unavailable'
+    || doctor.unavailabilityPeriods?.some((period) => dateValue >= period.startDate && dateValue <= period.endDate)
+  return unavailable ? [] : getTimesForDay(doctor, getWeekdayFromValue(dateValue))
 }
 const getWeeklySchedule = (doctor) => weekdays.map((day) => {
   const schedule = doctor.weeklyAvailability?.find((entry) => entry.day === day)
@@ -39,7 +52,7 @@ const findNextAvailableDate = (doctor) => {
   for (let offset = 0; offset < 14; offset += 1) {
     const date = new Date(today)
     date.setDate(date.getDate() + offset)
-    if (getTimesForDay(doctor, weekdays[date.getDay()]).length) return createDateSelection(date)
+    if (getTimesForDate(doctor, formatDateValue(date)).length) return createDateSelection(date)
   }
   return createDateSelection(today)
 }
@@ -105,7 +118,17 @@ function AuthPage({ page, error, busy, onChange, onSubmit, onBack }) {
   )
 }
 
-function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailability, onAppointmentAction }) {
+function DoctorDashboard({
+  auth,
+  appointments,
+  error,
+  onLogout,
+  onSaveAvailability,
+  onSaveAvailabilityStatus,
+  onAddUnavailablePeriod,
+  onRemoveUnavailablePeriod,
+  onAppointmentAction,
+}) {
   const doctor = auth.user.doctor
   const [weeklySchedule, setWeeklySchedule] = useState(() => getWeeklySchedule(doctor || { availableDays: weekdays.slice(1, 6), slots: [] }))
   const [availabilityBusy, setAvailabilityBusy] = useState(false)
@@ -116,9 +139,20 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
   const [reschedulingId, setReschedulingId] = useState('')
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [rescheduleReason, setRescheduleReason] = useState('')
+  const [availabilityStatus, setAvailabilityStatus] = useState(doctor?.availabilityStatus || 'available')
+  const [availabilityStatusReason, setAvailabilityStatusReason] = useState(doctor?.availabilityStatusReason || '')
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [statusError, setStatusError] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [periodBusy, setPeriodBusy] = useState(false)
+  const [periodError, setPeriodError] = useState('')
+  const [periodStartDate, setPeriodStartDate] = useState('')
+  const [periodEndDate, setPeriodEndDate] = useState('')
+  const [periodReason, setPeriodReason] = useState(unavailabilityReasons[0])
+  const [periodExplanation, setPeriodExplanation] = useState('')
   const todayValue = getCurrentDateValue()
   const [rescheduleTime, setRescheduleTime] = useState(doctor?.slots[0] || '')
-  const rescheduleTimes = getTimesForDay(doctor || {}, getWeekdayFromValue(rescheduleDate || todayValue))
+  const rescheduleTimes = getTimesForDate(doctor || {}, rescheduleDate || todayValue)
   const upcomingAppointments = appointments
     .filter((appointment) => appointment.date >= todayValue && appointment.status !== 'cancelled')
     .sort((first, second) => first.date.localeCompare(second.date) || first.time.localeCompare(second.time))
@@ -149,6 +183,54 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
       setAvailabilityError(saveError.message)
     } finally {
       setAvailabilityBusy(false)
+    }
+  }
+
+  const saveAvailabilityStatus = async (event) => {
+    event.preventDefault()
+    setStatusBusy(true)
+    setStatusError('')
+    setStatusMessage('')
+    try {
+      await onSaveAvailabilityStatus(availabilityStatus, availabilityStatusReason)
+      setStatusMessage('Booking status updated.')
+    } catch (saveError) {
+      setStatusError(saveError.message)
+    } finally {
+      setStatusBusy(false)
+    }
+  }
+
+  const addUnavailablePeriod = async (event) => {
+    event.preventDefault()
+    setPeriodBusy(true)
+    setPeriodError('')
+    try {
+      await onAddUnavailablePeriod({
+        startDate: periodStartDate,
+        endDate: periodEndDate,
+        reason: periodReason,
+        explanation: periodExplanation,
+      })
+      setPeriodStartDate('')
+      setPeriodEndDate('')
+      setPeriodExplanation('')
+    } catch (saveError) {
+      setPeriodError(saveError.message)
+    } finally {
+      setPeriodBusy(false)
+    }
+  }
+
+  const removeUnavailablePeriod = async (periodId) => {
+    setPeriodBusy(true)
+    setPeriodError('')
+    try {
+      await onRemoveUnavailablePeriod(periodId)
+    } catch (removeError) {
+      setPeriodError(removeError.message)
+    } finally {
+      setPeriodBusy(false)
     }
   }
 
@@ -201,7 +283,7 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
       }}>
         <label>Date<input type="date" min={todayValue} value={rescheduleDate} onChange={(event) => {
           setRescheduleDate(event.target.value)
-          setRescheduleTime(getTimesForDay(doctor || {}, getWeekdayFromValue(event.target.value))[0] || '')
+          setRescheduleTime(getTimesForDate(doctor || {}, event.target.value)[0] || '')
         }} required /></label>
         <label>Time<select value={rescheduleTime} onChange={(event) => setRescheduleTime(event.target.value)} required>{rescheduleTimes.map((slot) => <option key={slot} value={slot}>{slot}</option>)}</select></label>
         <label className="reschedule-reason">Reason<textarea value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} maxLength={500} required /></label>
@@ -226,7 +308,7 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
           <div className="doctor-sidebar">
             <article className="doctor-card doctor-profile-card">
               <p className="eyebrow">YOUR PUBLIC PROFILE</p>
-              <div className="doctor-top"><div className={`avatar ${doctor?.color || 'blue'}`}>{doctor?.initials}</div><div className="doctor-meta"><h3>{doctor?.name}</h3><p>{doctor?.specialty}</p><span className="verified">Available to book</span></div></div>
+              <div className="doctor-top"><div className={`avatar ${doctor?.color || 'blue'}`}>{doctor?.initials}</div><div className="doctor-meta"><h3>{doctor?.name}</h3><p>{doctor?.specialty}</p><span className="verified">{doctor?.availabilityStatus === 'unavailable' ? 'Bookings paused' : 'Available to book'}</span></div></div>
               <p className="doctor-experience">{doctor?.experience}</p>
               <div className="card-divider" />
               <p className="next-available">Weekly availability: <b>{doctor?.availableDays.join(', ')}</b></p>
@@ -240,6 +322,30 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
               {availabilityError && <p className="auth-error" role="alert">{availabilityError}</p>}
               {availabilityMessage && <p className="availability-success" role="status">{availabilityMessage}</p>}
               <button className="availability-save" type="submit" disabled={availabilityBusy}>{availabilityBusy ? 'Saving...' : 'Save availability'}</button>
+            </form>
+            <form className="availability-panel" onSubmit={saveAvailabilityStatus}>
+              <div><p className="eyebrow">BOOKING STATUS</p><h2>Pause or resume bookings</h2></div>
+              <label className="availability-field">Status<select value={availabilityStatus} onChange={(event) => setAvailabilityStatus(event.target.value)}><option value="available">Available</option><option value="unavailable">Unavailable</option></select></label>
+              {availabilityStatus === 'unavailable' && <label className="availability-field">Reason<select value={availabilityStatusReason} onChange={(event) => setAvailabilityStatusReason(event.target.value)} required><option value="">Select a reason</option>{unavailabilityReasons.map((reason) => <option key={reason} value={reason}>{reason}</option>)}</select></label>}
+              {statusError && <p className="auth-error" role="alert">{statusError}</p>}
+              {statusMessage && <p className="availability-success" role="status">{statusMessage}</p>}
+              <button className="availability-save" type="submit" disabled={statusBusy}>{statusBusy ? 'Saving...' : 'Update booking status'}</button>
+            </form>
+            <form className="availability-panel" onSubmit={addUnavailablePeriod}>
+              <div><p className="eyebrow">SCHEDULED TIME OFF</p><h2>Add unavailable dates</h2></div>
+              <label className="availability-field">Start date<input type="date" min={todayValue} value={periodStartDate} onChange={(event) => setPeriodStartDate(event.target.value)} required /></label>
+              <label className="availability-field">End date<input type="date" min={periodStartDate || todayValue} value={periodEndDate} onChange={(event) => setPeriodEndDate(event.target.value)} required /></label>
+              <label className="availability-field">Reason<select value={periodReason} onChange={(event) => setPeriodReason(event.target.value)} required>{unavailabilityReasons.map((reason) => <option key={reason} value={reason}>{reason}</option>)}</select></label>
+              <label className="availability-field">Explanation (optional)<textarea value={periodExplanation} onChange={(event) => setPeriodExplanation(event.target.value)} maxLength={500} /></label>
+              {periodError && <p className="auth-error" role="alert">{periodError}</p>}
+              <button className="availability-save" type="submit" disabled={periodBusy}>{periodBusy ? 'Saving...' : 'Add unavailable dates'}</button>
+              {!!doctor?.unavailabilityPeriods?.length && <div className="unavailability-list">
+                <h3>Scheduled time off</h3>
+                {doctor.unavailabilityPeriods.map((period) => <article className="unavailability-item" key={period._id}>
+                  <div><strong>{period.startDate}{period.endDate !== period.startDate ? ` to ${period.endDate}` : ''}</strong><span>{period.reason}{period.explanation ? ` — ${period.explanation}` : ''}</span></div>
+                  <button type="button" disabled={periodBusy} onClick={() => removeUnavailablePeriod(period._id)}>Remove</button>
+                </article>)}
+              </div>}
             </form>
           </div>
           <div className="appointments-column">
@@ -342,7 +448,7 @@ function App() {
   const [visibleMonth, setVisibleMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
   const [selectedTimeValue, setSelectedTime] = useState('')
   const selectedDoctor = selectedDoctorState
-    ? { ...selectedDoctorState, slots: getTimesForDay(selectedDoctorState, selectedDate.weekday) }
+    ? { ...selectedDoctorState, slots: getTimesForDate(selectedDoctorState, selectedDate.value) }
     : null
   const selectedTime = selectedDoctor?.slots.includes(selectedTimeValue) ? selectedTimeValue : selectedDoctor?.slots[0] || ''
   const [booked, setBookedState] = useState(false)
@@ -359,7 +465,7 @@ function App() {
         setDoctors(doctorsWithIds)
         if (doctorsWithIds.length) {
           const firstDate = findNextAvailableDate(doctorsWithIds[0])
-          const firstDateTimes = getTimesForDay(doctorsWithIds[0], firstDate.weekday)
+          const firstDateTimes = getTimesForDate(doctorsWithIds[0], firstDate.value)
           setSelectedDoctor({ ...doctorsWithIds[0], slots: firstDateTimes })
           setSelectedDate(firstDate)
           setSelectedTime(firstDateTimes[0] || '')
@@ -415,7 +521,7 @@ function App() {
     || (visibleMonth.getFullYear() === today.getFullYear() && visibleMonth.getMonth() > today.getMonth())
   const chooseDoctor = (doctor) => {
     const firstDate = findNextAvailableDate(doctor)
-    const firstDateTimes = getTimesForDay(doctor, firstDate.weekday)
+    const firstDateTimes = getTimesForDate(doctor, firstDate.value)
     setSelectedDoctor({ ...doctor, slots: firstDateTimes })
     setSelectedDate(firstDate)
     setSelectedTime(firstDateTimes[0] || '')
@@ -506,6 +612,45 @@ function App() {
     setDoctors((current) => current.map((doctor) => doctor._id === result._id ? { ...doctor, ...result } : doctor))
   }
 
+  const updateDoctorState = (doctor) => {
+    const updatedSession = { ...auth, user: { ...auth.user, doctor } }
+    localStorage.setItem('docbook-session', JSON.stringify(updatedSession))
+    setAuth(updatedSession)
+    setDoctors((current) => current.map((item) => item._id === doctor._id ? { ...item, ...doctor } : item))
+  }
+
+  const saveAvailabilityStatus = async (status, reason) => {
+    const response = await fetch('/api/doctors/availability/status', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + auth.token },
+      body: JSON.stringify({ status, reason }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not update booking status.')
+    updateDoctorState(result)
+  }
+
+  const addUnavailablePeriod = async (period) => {
+    const response = await fetch('/api/doctors/unavailability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + auth.token },
+      body: JSON.stringify(period),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not add unavailable dates.')
+    updateDoctorState(result)
+  }
+
+  const removeUnavailablePeriod = async (periodId) => {
+    const response = await fetch(`/api/doctors/unavailability/${periodId}`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + auth.token },
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not remove unavailable dates.')
+    updateDoctorState(result)
+  }
+
   const updateAppointment = async (appointmentId, action) => {
     const response = await fetch(`/api/appointments/${appointmentId}`, {
       method: 'PATCH',
@@ -550,7 +695,7 @@ function App() {
   }
 
   if (auth?.user?.role === 'doctor') {
-    return <DoctorDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onSaveAvailability={saveAvailability} onAppointmentAction={updateAppointment} />
+    return <DoctorDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onSaveAvailability={saveAvailability} onSaveAvailabilityStatus={saveAvailabilityStatus} onAddUnavailablePeriod={addUnavailablePeriod} onRemoveUnavailablePeriod={removeUnavailablePeriod} onAppointmentAction={updateAppointment} />
   }
 
   if (auth?.user?.role === 'patient' && showPatientDashboard) {
@@ -567,8 +712,8 @@ function App() {
       <main id="top">
         <section className="welcome-section" id="find-doctor"><div><p className="eyebrow">{todayLabel}</p><h1>Good morning<span>.</span></h1><p className="intro">Find the right care for you today.</p></div><div className="trust-note"><span className="shield">✓</span> Your health, handled with care</div></section>
         <section className="search-panel"><div className="search-label">What kind of care do you need?</div><div className="search-row"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search doctors or specialties" aria-label="Search doctors or specialties" /></label><button className="location-button" type="button"><span>⌖</span> India <b>⌄</b></button><button className="search-button" type="button" onClick={() => document.querySelector('.doctor-grid')?.scrollIntoView({ behavior: 'smooth' })}>Search <span>→</span></button></div><div className="quick-links"><span>Popular:</span> <button type="button" onClick={() => setQuery('General physician')}>General physician</button><button type="button" onClick={() => setQuery('Dermatologist')}>Dermatology</button><button type="button" onClick={() => setQuery('Pediatrician')}>Pediatrics</button></div></section>
-        <section className="content-section"><div className="section-heading"><div><p className="eyebrow">AVAILABLE TODAY</p><h2>Recommended for you</h2></div><button className="view-all" type="button" onClick={() => setQuery('')}>View all doctors <span>→</span></button></div><div className="doctor-grid">{filteredDoctors.length ? filteredDoctors.map((doctor) => <article className={`doctor-card ${selectedDoctor.id === doctor.id ? 'selected' : ''}`} key={doctor.id}><div className="doctor-top"><div className={`avatar ${doctor.color}`}>{doctor.initials}</div><div className="doctor-meta"><h3>{doctor.name}</h3><p>{doctor.specialty}</p><span className="verified">✓ Verified</span></div><span className="favorite">♡</span></div><div className="doctor-stats"><span>★ <b>{doctor.rating}</b></span><span>{doctor.experience}</span><span>{doctor.patients}</span></div><div className="card-divider" /><p className="next-available"><span /> Next available <b>today</b></p><button className="select-doctor" type="button" onClick={() => chooseDoctor(doctor)}>{selectedDoctor.id === doctor.id ? 'Selected' : 'Choose doctor'} <span>→</span></button></article>) : <p className="empty-state">No doctors found. Try another search.</p>}</div></section>
-        <section className="booking-section" id="appointments"><div className="booking-header"><div><p className="eyebrow">BOOK AN APPOINTMENT</p><h2>Choose a convenient time</h2></div><span className="step-count">Step 2 of 2</span></div><div className="booking-layout"><div className="booking-options"><div className="option-block"><h3>Pick a date</h3><div className="calendar-picker"><div className="calendar-header"><button type="button" aria-label="Previous month" disabled={!canGoToPreviousMonth} onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>‹</button><strong>{monthLabel}</strong><button type="button" aria-label="Next month" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))}>›</button></div><div className="calendar-grid" role="group" aria-label={monthLabel}><div className="calendar-weekday" aria-hidden="true">Sun</div><div className="calendar-weekday" aria-hidden="true">Mon</div><div className="calendar-weekday" aria-hidden="true">Tue</div><div className="calendar-weekday" aria-hidden="true">Wed</div><div className="calendar-weekday" aria-hidden="true">Thu</div><div className="calendar-weekday" aria-hidden="true">Fri</div><div className="calendar-weekday" aria-hidden="true">Sat</div>{Array.from({ length: monthOffset }, (_, index) => <span className="calendar-empty" key={`empty-${index}`} />)}{monthDates.map((date) => <button className={`calendar-date ${selectedDate.value === date.value ? 'chosen' : ''}`} type="button" key={date.value} disabled={date.value < formatDateValue(today) || !selectedDoctor.availableDays?.includes(date.weekday)} aria-label={date.fullDate} aria-pressed={selectedDate.value === date.value} onClick={() => { setSelectedDate(date); setBooked(false) }}>{date.date}</button>)}</div></div></div><div className="option-block"><h3>Available times for {selectedDate.fullDate}</h3><div className="time-list">{selectedDoctor.slots.map((time) => <button className={`time-option ${selectedTime === time ? 'chosen' : ''}`} type="button" key={time} onClick={() => { setSelectedTime(time); setBooked(false) }}>{time}</button>)}</div></div></div><aside className="summary-card"><p className="eyebrow">YOUR VISIT</p><div className="summary-doctor"><div className={`avatar small ${selectedDoctor.color}`}>{selectedDoctor.initials}</div><div><h3>{selectedDoctor.name}</h3><p>{selectedDoctor.specialty}</p></div></div><div className="summary-line"><span>Appointment</span><b>{selectedDate.fullDate}</b></div><div className="summary-line"><span>Time</span><b>{selectedTime}</b></div><button className="confirm-button" type="button" onClick={() => setBooked(true)}>{booked ? 'Appointment confirmed ✓' : 'Confirm appointment'} <span>→</span></button>{booked && <p className="confirmation">You’re all set. We’ll send a reminder to your email.</p>}</aside></div></section>
+        <section className="content-section"><div className="section-heading"><div><p className="eyebrow">AVAILABLE TODAY</p><h2>Recommended for you</h2></div><button className="view-all" type="button" onClick={() => setQuery('')}>View all doctors <span>→</span></button></div><div className="doctor-grid">{filteredDoctors.length ? filteredDoctors.map((doctor) => <article className={`doctor-card ${selectedDoctor.id === doctor.id ? 'selected' : ''}`} key={doctor.id}><div className="doctor-top"><div className={`avatar ${doctor.color}`}>{doctor.initials}</div><div className="doctor-meta"><h3>{doctor.name}</h3><p>{doctor.specialty}</p><span className="verified">{doctor.availabilityStatus === 'unavailable' ? 'Bookings paused' : '✓ Verified'}</span></div><span className="favorite">♡</span></div><div className="doctor-stats"><span>★ <b>{doctor.rating}</b></span><span>{doctor.experience}</span><span>{doctor.patients}</span></div><div className="card-divider" /><p className="next-available"><span /> Next available <b>today</b></p><button className="select-doctor" type="button" onClick={() => chooseDoctor(doctor)}>{selectedDoctor.id === doctor.id ? 'Selected' : 'Choose doctor'} <span>→</span></button></article>) : <p className="empty-state">No doctors found. Try another search.</p>}</div></section>
+        <section className="booking-section" id="appointments"><div className="booking-header"><div><p className="eyebrow">BOOK AN APPOINTMENT</p><h2>Choose a convenient time</h2></div><span className="step-count">Step 2 of 2</span></div><div className="booking-layout"><div className="booking-options"><div className="option-block"><h3>Pick a date</h3><div className="calendar-picker"><div className="calendar-header"><button type="button" aria-label="Previous month" disabled={!canGoToPreviousMonth} onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>‹</button><strong>{monthLabel}</strong><button type="button" aria-label="Next month" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))}>›</button></div><div className="calendar-grid" role="group" aria-label={monthLabel}><div className="calendar-weekday" aria-hidden="true">Sun</div><div className="calendar-weekday" aria-hidden="true">Mon</div><div className="calendar-weekday" aria-hidden="true">Tue</div><div className="calendar-weekday" aria-hidden="true">Wed</div><div className="calendar-weekday" aria-hidden="true">Thu</div><div className="calendar-weekday" aria-hidden="true">Fri</div><div className="calendar-weekday" aria-hidden="true">Sat</div>{Array.from({ length: monthOffset }, (_, index) => <span className="calendar-empty" key={`empty-${index}`} />)}        {monthDates.map((date) => <button className={`calendar-date ${selectedDate.value === date.value ? 'chosen' : ''}`} type="button" key={date.value} disabled={date.value < formatDateValue(today) || !getTimesForDate(selectedDoctorState, date.value).length} aria-label={date.fullDate} aria-pressed={selectedDate.value === date.value} onClick={() => { setSelectedDate(date); setBooked(false) }}>{date.date}</button>)}</div></div></div><div className="option-block"><h3>Available times for {selectedDate.fullDate}</h3><div className="time-list">{selectedDoctor.slots.map((time) => <button className={`time-option ${selectedTime === time ? 'chosen' : ''}`} type="button" key={time} onClick={() => { setSelectedTime(time); setBooked(false) }}>{time}</button>)}</div></div></div><aside className="summary-card"><p className="eyebrow">YOUR VISIT</p><div className="summary-doctor"><div className={`avatar small ${selectedDoctor.color}`}>{selectedDoctor.initials}</div><div><h3>{selectedDoctor.name}</h3><p>{selectedDoctor.specialty}</p></div></div><div className="summary-line"><span>Appointment</span><b>{selectedDate.fullDate}</b></div><div className="summary-line"><span>Time</span><b>{selectedTime}</b></div><button className="confirm-button" type="button" onClick={() => setBooked(true)}>{booked ? 'Appointment confirmed ✓' : 'Confirm appointment'} <span>→</span></button>{booked && <p className="confirmation">You’re all set. We’ll send a reminder to your email.</p>}</aside></div></section>
       </main><footer><span className="brand-mark">+</span> DocBook <span>Simple care, better days.</span></footer>
     </div>
   )
