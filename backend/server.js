@@ -455,6 +455,87 @@ app.get('/api/auth/me', requireAuth, async (request, response, next) => {
   }
 })
 
+app.patch('/api/auth/profile', requireAuth, async (request, response, next) => {
+  try {
+    const name = typeof request.body.name === 'string'
+      ? request.body.name.trim()
+      : ''
+    const currentPassword = request.body.currentPassword
+    const newPassword = request.body.newPassword
+    const changingPassword = Boolean(currentPassword || newPassword)
+
+    if (name.length < 2 || name.length > 80) {
+      return response.status(400).json({
+        message: 'Your name must be between 2 and 80 characters.',
+      })
+    }
+
+    if (
+      changingPassword &&
+      (typeof currentPassword !== 'string' ||
+        typeof newPassword !== 'string' ||
+        !currentPassword ||
+        Buffer.byteLength(newPassword, 'utf8') < 8 ||
+        Buffer.byteLength(newPassword, 'utf8') > 72)
+    ) {
+      return response.status(400).json({
+        message: 'Enter your current password and a new password between 8 and 72 bytes.',
+      })
+    }
+
+    const user = await User.findById(request.auth.id).select('+passwordHash')
+    if (!user || user.isActive === false) {
+      return response.status(403).json({
+        message: 'This account is unavailable.',
+      })
+    }
+
+    if (changingPassword && !await bcrypt.compare(currentPassword, user.passwordHash)) {
+      return response.status(400).json({
+        message: 'Your current password is incorrect.',
+      })
+    }
+
+    let doctor = null
+    if (user.role === 'doctor') {
+      doctor = await Doctor.findOne({ user: user._id })
+      if (doctor && doctor.name !== name) {
+        const duplicateName = await Doctor.exists({
+          _id: { $ne: doctor._id },
+          name,
+        })
+        if (duplicateName) {
+          return response.status(409).json({
+            message: 'A doctor profile already uses that name.',
+          })
+        }
+
+        doctor.name = name
+        doctor.initials = name
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((part) => part[0])
+          .join('')
+          .toUpperCase()
+      }
+    }
+
+    user.name = name
+    if (changingPassword) {
+      user.passwordHash = await bcrypt.hash(newPassword, 10)
+    }
+    await user.save()
+    if (doctor?.isModified()) await doctor.save()
+
+    return response.json({
+      token: createToken(user),
+      user: await publicUser(user),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 // -----------------------------------------------------------------------------
 // Admin routes
 // -----------------------------------------------------------------------------

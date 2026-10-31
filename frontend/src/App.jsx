@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import './Auth.css'
 import './App.css'
+import AccountSettings from './AccountSettings.jsx'
 import AdminPanel from './AdminPanel.jsx'
 import ReportPanel from './ReportPanel.jsx'
 
@@ -144,6 +145,7 @@ function DoctorDashboard({
   onAddUnavailablePeriod,
   onRemoveUnavailablePeriod,
   onAppointmentAction,
+  onSaveProfile,
 }) {
   const doctor = auth.user.doctor
   const [weeklySchedule, setWeeklySchedule] = useState(() => getWeeklySchedule(doctor || { availableDays: weekdays.slice(1, 6), slots: [] }))
@@ -304,6 +306,7 @@ function DoctorDashboard({
               <div className="card-divider" />
               <p className="next-available">Weekly availability: <b>{doctor?.availableDays.join(', ')}</b></p>
             </article>
+            <AccountSettings auth={auth} onSave={onSaveProfile} />
             <form className="availability-panel" onSubmit={saveAvailability}>
               <div><p className="eyebrow">WEEKLY SCHEDULE</p><h2>Set your availability</h2></div>
               <div className="weekly-schedule">{weeklySchedule.map(({ day, active, times }) => <div className="weekly-day-row" key={day}>
@@ -358,7 +361,7 @@ function DoctorDashboard({
   )
 }
 
-function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRespondToReschedule, onCancelAppointment }) {
+function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRespondToReschedule, onCancelAppointment, onSaveProfile }) {
   const [busyAppointment, setBusyAppointment] = useState('')
   const [actionError, setActionError] = useState('')
   const [cancellationId, setCancellationId] = useState('')
@@ -410,6 +413,7 @@ function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRes
         <section className="welcome-section">
           <div><p className="eyebrow">PATIENT DASHBOARD</p><h1>Welcome, {auth.user.name}<span>.</span></h1><p className="intro">View your upcoming visits and respond to doctor requests.</p></div>
         </section>
+        <AccountSettings auth={auth} onSave={onSaveProfile} />
         {error && <p className="auth-error" role="alert">{error}</p>}
         {actionError && <p className="auth-error" role="alert">{actionError}</p>}
         <section className="patient-appointments" aria-label="Your appointments">
@@ -734,10 +738,26 @@ function App() {
       : current)
   }
 
+  const saveProfile = async (profile) => {
+    const response = await fetch('/api/auth/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify(profile),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not update your account details.')
+
+    const updatedSession = { ...auth, ...result }
+    localStorage.setItem('docbook-session', JSON.stringify(updatedSession))
+    setAuth(updatedSession)
+    return updatedSession
+  }
+
   if (window.location.pathname.replace(/\/$/, '') === '/admin') {
     return (
       <AdminPanel
         auth={auth}
+        onSaveProfile={saveProfile}
         onLogin={(session) => {
           localStorage.setItem('docbook-session', JSON.stringify(session))
           setAuth(session)
@@ -752,11 +772,11 @@ function App() {
   }
 
   if (auth?.user?.role === 'doctor') {
-    return <DoctorDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onSaveAvailability={saveAvailability} onSaveAvailabilityStatus={saveAvailabilityStatus} onAddUnavailablePeriod={addUnavailablePeriod} onRemoveUnavailablePeriod={removeUnavailablePeriod} onAppointmentAction={updateAppointment} />
+    return <DoctorDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onSaveAvailability={saveAvailability} onSaveAvailabilityStatus={saveAvailabilityStatus} onAddUnavailablePeriod={addUnavailablePeriod} onRemoveUnavailablePeriod={removeUnavailablePeriod} onAppointmentAction={updateAppointment} onSaveProfile={saveProfile} />
   }
 
   if (auth?.user?.role === 'patient' && showPatientDashboard) {
-    return <PatientDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onBrowse={() => setShowPatientDashboard(false)} onRespondToReschedule={respondToReschedule} onCancelAppointment={cancelPatientAppointment} />
+    return <PatientDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onBrowse={() => setShowPatientDashboard(false)} onRespondToReschedule={respondToReschedule} onCancelAppointment={cancelPatientAppointment} onSaveProfile={saveProfile} />
   }
 
   if (!selectedDoctor) {

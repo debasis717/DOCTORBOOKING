@@ -80,6 +80,16 @@ main { padding: 0 6%; }.welcome-section { display: flex; align-items: end; justi
 .patient-cancel-form select, .patient-cancel-form textarea { min-height: 36px; padding: 8px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); font: inherit; }
 .patient-cancel-form textarea { min-height: 64px; resize: vertical; }
 .patient-cancel-form .patient-reschedule-actions button:first-child { border-color: #f0d4cf; background: #fff8f6; color: #9c352e; }
+.account-settings { display: grid; gap: 16px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.account-settings h2 { margin: 0; font-size: 17px; }
+.account-settings-description { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.account-settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; gap: 12px; }
+.account-settings-form label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
+.account-settings-form input { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); font: inherit; }
+.account-settings-form button { min-height: 38px; padding: 0 14px; border: 0; border-radius: 5px; background: var(--green); color: white; font-size: 11px; font-weight: 700; }
+.account-settings-form button:disabled { opacity: .6; cursor: wait; }
+.account-settings-form .auth-error, .account-settings-success { grid-column: 1 / -1; margin: 0; font-size: 11px; }
+.account-settings-success { color: #286449; }
 .appointment-history-note { grid-column: 1 / -1; margin: 0; }
 .history-panel { margin-top: 36px; }
 @media (max-width: 480px) { .appointment-row { gap: 10px; }.reschedule-form label { flex: 1 1 120px; } }

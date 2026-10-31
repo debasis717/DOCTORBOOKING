@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './AdminPanel.css'
+import AccountSettings from './AccountSettings.jsx'
 import ReportPanel from './ReportPanel.jsx'
 
 const emptyDashboard = { stats: null, users: [], doctors: [], appointments: [] }
@@ -57,7 +58,7 @@ function AdminLogin({ auth, onLogin }) {
   )
 }
 
-function AdminDashboard({ auth, onLogout }) {
+function AdminDashboard({ auth, onLogout, onSaveProfile }) {
   const [dashboard, setDashboard] = useState(emptyDashboard)
   const [activeSection, setActiveSection] = useState('overview')
   const [loading, setLoading] = useState(true)
@@ -138,6 +139,7 @@ function AdminDashboard({ auth, onLogout }) {
     { id: 'doctors', label: 'Doctors' },
     { id: 'appointments', label: 'Appointments' },
     { id: 'reports', label: 'Generate Report' },
+    { id: 'profile', label: 'My profile' },
   ]
 
   return (
@@ -229,6 +231,7 @@ function AdminDashboard({ auth, onLogout }) {
               </table></div>
             </section>}
             {activeSection === 'reports' && <ReportPanel token={auth.token} endpoint="/api/admin/reports" />}
+            {activeSection === 'profile' && <AccountSettings auth={auth} onSave={onSaveProfile} />}
           </>}
         </main>
       </div>
@@ -236,7 +239,7 @@ function AdminDashboard({ auth, onLogout }) {
   )
 }
 
-export default function AdminPanel({ auth, onLogin, onLogout }) {
-  if (auth?.user?.role === 'admin') return <AdminDashboard auth={auth} onLogout={onLogout} />
+export default function AdminPanel({ auth, onLogin, onLogout, onSaveProfile }) {
+  if (auth?.user?.role === 'admin') return <AdminDashboard auth={auth} onLogout={onLogout} onSaveProfile={onSaveProfile} />
   return <AdminLogin auth={auth} onLogin={onLogin} />
 }
