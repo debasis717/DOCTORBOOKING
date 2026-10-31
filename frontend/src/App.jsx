@@ -138,9 +138,6 @@ function DoctorDashboard({
   const [availabilityError, setAvailabilityError] = useState('')
   const [actionError, setActionError] = useState('')
   const [busyAppointment, setBusyAppointment] = useState('')
-  const [reschedulingId, setReschedulingId] = useState('')
-  const [rescheduleDate, setRescheduleDate] = useState('')
-  const [rescheduleReason, setRescheduleReason] = useState('')
   const [availabilityStatus, setAvailabilityStatus] = useState(doctor?.availabilityStatus || 'available')
   const [availabilityStatusReason, setAvailabilityStatusReason] = useState(doctor?.availabilityStatusReason || '')
   const [statusBusy, setStatusBusy] = useState(false)
@@ -153,8 +150,6 @@ function DoctorDashboard({
   const [periodReason, setPeriodReason] = useState(unavailabilityReasons[0])
   const [periodExplanation, setPeriodExplanation] = useState('')
   const todayValue = getCurrentDateValue()
-  const [rescheduleTime, setRescheduleTime] = useState(doctor?.slots[0] || '')
-  const rescheduleTimes = getTimesForDate(doctor || {}, rescheduleDate || todayValue)
   const upcomingAppointments = appointments
     .filter((appointment) => appointment.date >= todayValue && !['cancelled', 'completed'].includes(appointment.status))
     .sort((first, second) => first.date.localeCompare(second.date) || first.time.localeCompare(second.time))
@@ -241,7 +236,6 @@ function DoctorDashboard({
     setActionError('')
     try {
       await onAppointmentAction(appointmentId, { action, ...details })
-      setReschedulingId('')
     } catch (requestError) {
       setActionError(requestError.message)
     } finally {
@@ -269,33 +263,10 @@ function DoctorDashboard({
       {!isHistory && <div className="appointment-actions">
         {appointment.status === 'pending' && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'confirm')}>Confirm</button>}
         {appointment.status === 'confirmed' && appointment.date <= todayValue && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'complete')}>Mark completed</button>}
-        {['pending', 'confirmed', 'rescheduled'].includes(appointment.status) && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => {
-          setReschedulingId(appointment._id)
-          setRescheduleDate(appointment.date)
-          setRescheduleTime(appointment.time)
-          setRescheduleReason('')
-        }}>Reschedule</button>}
         <button className="cancel-action" type="button" disabled={busyAppointment === appointment._id} onClick={() => {
           if (window.confirm('Cancel this appointment?')) handleAppointmentAction(appointment._id, 'cancel')
         }}>Cancel</button>
       </div>}
-      {!isHistory && reschedulingId === appointment._id && <form className="reschedule-form" onSubmit={(event) => {
-        event.preventDefault()
-        handleAppointmentAction(appointment._id, 'reschedule', {
-          date: rescheduleDate,
-          time: rescheduleTime,
-          reason: rescheduleReason,
-        })
-      }}>
-        <label>Date<input type="date" min={todayValue} value={rescheduleDate} onChange={(event) => {
-          setRescheduleDate(event.target.value)
-          setRescheduleTime(getTimesForDate(doctor || {}, event.target.value)[0] || '')
-        }} required /></label>
-        <label>Time<select value={rescheduleTime} onChange={(event) => setRescheduleTime(event.target.value)} required>{rescheduleTimes.map((slot) => <option key={slot} value={slot}>{slot}</option>)}</select></label>
-        <label className="reschedule-reason">Reason<textarea value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} maxLength={500} required /></label>
-        <button type="submit" disabled={busyAppointment === appointment._id}>Send request</button>
-        <button type="button" onClick={() => setReschedulingId('')}>Close</button>
-      </form>}
     </article>
   )
 
