@@ -186,10 +186,17 @@ function AdminDashboard({ auth, onLogout }) {
             </section>}
             {activeSection === 'appointments' && <section className="admin-table-card">
               <div className="admin-section-heading"><h2>All appointments</h2><span>{dashboard.appointments.length} appointments</span></div>
-              <div className="admin-table-wrap"><table><thead><tr><th>Patient</th><th>Doctor</th><th>Specialty</th><th>Date &amp; time</th><th>Status</th><th>Action</th></tr></thead>
+              <div className="admin-table-wrap"><table><thead><tr><th>Patient</th><th>Doctor</th><th>Specialty</th><th>Appointment / reschedule</th><th>Status</th><th>Action</th></tr></thead>
                 <tbody>{dashboard.appointments.map((appointment) => <tr key={appointment._id}>
                   <td>{appointment.patientName}</td><td>{appointment.doctorName}</td><td>{appointment.specialty}</td>
-                  <td>{appointment.date} at {appointment.time}</td>
+                  <td>
+                    {appointment.date} at {appointment.time}
+                    {appointment.rescheduleRequest && <small className="admin-reschedule-detail">
+                      {appointment.rescheduleRequest.status === 'pending' ? 'Awaiting patient response' : `Request ${appointment.rescheduleRequest.status}`}
+                      : {appointment.rescheduleRequest.proposedDate} at {appointment.rescheduleRequest.proposedTime}
+                      {' - '}{appointment.rescheduleRequest.reason}
+                    </small>}
+                  </td>
                   <td><span className={`appointment-status status-${appointment.status}`}>{appointment.status}</span></td>
                   <td><div className="admin-row-actions">
                     {appointment.status === 'pending' && <button type="button" disabled={busyId === appointment._id} onClick={() => updateAppointment(appointment, 'confirm')}>Confirm</button>}

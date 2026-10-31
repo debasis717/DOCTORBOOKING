@@ -485,6 +485,11 @@ app.patch(
         })
       }
 
+      if (action === 'cancel' && appointment.rescheduleRequest?.status === 'pending') {
+        appointment.rescheduleRequest.status = 'rejected'
+        appointment.rescheduleRequest.respondedAt = new Date()
+      }
+
       appointment.status =
         action === 'confirm' ? 'confirmed' : 'cancelled'
 
@@ -661,17 +666,41 @@ app.patch(
       const { action, date, time } = request.body
 
       if (action === 'confirm') {
+        if (appointment.status !== 'pending') {
+          return response.status(409).json({
+            message: 'Only pending appointments can be confirmed.',
+          })
+        }
+
         appointment.status = 'confirmed'
       } else if (action === 'cancel') {
+        if (appointment.rescheduleRequest?.status === 'pending') {
+          appointment.rescheduleRequest.status = 'rejected'
+          appointment.rescheduleRequest.respondedAt = new Date()
+        }
         appointment.status = 'cancelled'
       } else if (action === 'reschedule') {
+        const reason = typeof request.body.reason === 'string'
+          ? request.body.reason.trim()
+          : ''
+
+        if (!['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
+          return response.status(409).json({
+            message: 'This appointment cannot be rescheduled right now.',
+          })
+        }
+
         if (
           !isValidDateValue(date) ||
           date < getTodayValue() ||
-          !time
+          typeof time !== 'string' ||
+          !time.trim() ||
+          (date === appointment.date && time.trim() === appointment.time) ||
+          !reason ||
+          reason.length > 500
         ) {
           return response.status(400).json({
-            message: 'Choose a valid future date and time.',
+            message: 'Choose a future time different from the current appointment and provide a reason of at most 500 characters.',
           })
         }
 
@@ -703,14 +732,142 @@ app.patch(
           })
         }
 
-        appointment.date = date
-        appointment.time = time
+        appointment.rescheduleRequest = {
+          proposedDate: date,
+          proposedTime: time.trim(),
+          reason,
+          previousStatus: appointment.status,
+          status: 'pending',
+        }
+        appointment.status = 'reschedule_requested'
+        appointment.history.push({
+          action: 'reschedule_requested',
+          actor: request.auth.id,
+          reason,
+          date: appointment.date,
+          time: appointment.time,
+          proposedDate: date,
+          proposedTime: time.trim(),
+        })
       } else {
         return response.status(400).json({
           message: 'Choose confirm, cancel, or reschedule.',
         })
       }
 
+      await appointment.save()
+
+      return response.json(appointment)
+    } catch (error) {
+      next(error)
+    }
+  },
+)
+
+app.patch(
+  '/api/appointments/:appointmentId/reschedule-response',
+  requireAuth,
+  requireRole('patient'),
+  async (request, response, next) => {
+    try {
+      if (!mongoose.isValidObjectId(request.params.appointmentId)) {
+        return response.status(400).json({
+          message: 'Choose a valid appointment.',
+        })
+      }
+
+      const appointment = await Appointment.findOne({
+        _id: request.params.appointmentId,
+        patient: request.auth.id,
+      })
+
+      if (!appointment) {
+        return response.status(404).json({
+          message: 'Appointment not found.',
+        })
+      }
+
+      const proposal = appointment.rescheduleRequest
+
+      if (
+        appointment.status !== 'reschedule_requested' ||
+        proposal?.status !== 'pending'
+      ) {
+        return response.status(409).json({
+          message: 'There is no pending reschedule request for this appointment.',
+        })
+      }
+
+      const { action } = request.body
+
+      if (!['accept', 'reject'].includes(action)) {
+        return response.status(400).json({
+          message: 'Choose accept or reject.',
+        })
+      }
+
+      if (action === 'accept') {
+        const originalDate = appointment.date
+        const originalTime = appointment.time
+        const doctor = await Doctor.findById(appointment.doctor)
+
+        if (!doctor) {
+          return response.status(404).json({
+            message: 'The doctor profile for this appointment no longer exists.',
+          })
+        }
+
+        if (
+          !isValidDateValue(proposal.proposedDate) ||
+          proposal.proposedDate < getTodayValue() ||
+          !getTimesForDay(doctor, getWeekDay(proposal.proposedDate))
+            .includes(proposal.proposedTime)
+        ) {
+          return response.status(409).json({
+            message: 'The proposed time is no longer available. Ask the doctor for another time.',
+          })
+        }
+
+        const conflict = await Appointment.exists({
+          _id: { $ne: appointment._id },
+          doctor: doctor._id,
+          date: proposal.proposedDate,
+          time: proposal.proposedTime,
+          status: { $ne: 'cancelled' },
+        })
+
+        if (conflict) {
+          return response.status(409).json({
+            message: 'The proposed time has already been booked. Ask the doctor for another time.',
+          })
+        }
+
+        appointment.date = proposal.proposedDate
+        appointment.time = proposal.proposedTime
+        appointment.status = 'rescheduled'
+        proposal.status = 'accepted'
+        appointment.history.push({
+          action: 'reschedule_accepted',
+          actor: request.auth.id,
+          date: originalDate,
+          time: originalTime,
+          proposedDate: proposal.proposedDate,
+          proposedTime: proposal.proposedTime,
+        })
+      } else {
+        appointment.status = proposal.previousStatus
+        proposal.status = 'rejected'
+        appointment.history.push({
+          action: 'reschedule_rejected',
+          actor: request.auth.id,
+          date: appointment.date,
+          time: appointment.time,
+          proposedDate: proposal.proposedDate,
+          proposedTime: proposal.proposedTime,
+        })
+      }
+
+      proposal.respondedAt = new Date()
       await appointment.save()
 
       return response.json(appointment)

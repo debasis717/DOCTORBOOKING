@@ -45,6 +45,13 @@ const findNextAvailableDate = (doctor) => {
 }
 const getCurrentDateValue = () => formatDateValue(new Date())
 const todayLabel = formatLongDate(today).toUpperCase()
+const appointmentStatusLabels = {
+  pending: 'Pending',
+  confirmed: 'Confirmed',
+  reschedule_requested: 'Awaiting patient response',
+  rescheduled: 'Rescheduled',
+  cancelled: 'Cancelled',
+}
 
 function readSavedSession() {
   try {
@@ -108,6 +115,7 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
   const [busyAppointment, setBusyAppointment] = useState('')
   const [reschedulingId, setReschedulingId] = useState('')
   const [rescheduleDate, setRescheduleDate] = useState('')
+  const [rescheduleReason, setRescheduleReason] = useState('')
   const todayValue = getCurrentDateValue()
   const [rescheduleTime, setRescheduleTime] = useState(doctor?.slots[0] || '')
   const rescheduleTimes = getTimesForDay(doctor || {}, getWeekdayFromValue(rescheduleDate || todayValue))
@@ -164,29 +172,40 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
         <span>{appointment.date} at {appointment.time}</span>
       </div>
       <span className={`appointment-status status-${appointment.status || 'pending'}`}>
-        {appointment.status === 'confirmed' ? 'Confirmed' : appointment.status === 'cancelled' ? 'Cancelled' : isHistory ? 'Past' : 'Pending'}
+        {appointmentStatusLabels[appointment.status] || (isHistory ? 'Past' : 'Pending')}
       </span>
+      {appointment.rescheduleRequest?.status === 'pending' && <div className="appointment-notice">
+        <strong>Proposed time: {appointment.rescheduleRequest.proposedDate} at {appointment.rescheduleRequest.proposedTime}</strong>
+        <span>Reason: {appointment.rescheduleRequest.reason}</span>
+        <span>The original appointment remains active until the patient responds.</span>
+      </div>}
       {!isHistory && <div className="appointment-actions">
-        {appointment.status !== 'confirmed' && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'confirm')}>Confirm</button>}
-        <button type="button" disabled={busyAppointment === appointment._id} onClick={() => {
+        {appointment.status === 'pending' && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => handleAppointmentAction(appointment._id, 'confirm')}>Confirm</button>}
+        {['pending', 'confirmed', 'rescheduled'].includes(appointment.status) && <button type="button" disabled={busyAppointment === appointment._id} onClick={() => {
           setReschedulingId(appointment._id)
           setRescheduleDate(appointment.date)
           setRescheduleTime(appointment.time)
-        }}>Reschedule</button>
+          setRescheduleReason('')
+        }}>Reschedule</button>}
         <button className="cancel-action" type="button" disabled={busyAppointment === appointment._id} onClick={() => {
           if (window.confirm('Cancel this appointment?')) handleAppointmentAction(appointment._id, 'cancel')
         }}>Cancel</button>
       </div>}
       {!isHistory && reschedulingId === appointment._id && <form className="reschedule-form" onSubmit={(event) => {
         event.preventDefault()
-        handleAppointmentAction(appointment._id, 'reschedule', { date: rescheduleDate, time: rescheduleTime })
+        handleAppointmentAction(appointment._id, 'reschedule', {
+          date: rescheduleDate,
+          time: rescheduleTime,
+          reason: rescheduleReason,
+        })
       }}>
         <label>Date<input type="date" min={todayValue} value={rescheduleDate} onChange={(event) => {
           setRescheduleDate(event.target.value)
           setRescheduleTime(getTimesForDay(doctor || {}, getWeekdayFromValue(event.target.value))[0] || '')
         }} required /></label>
         <label>Time<select value={rescheduleTime} onChange={(event) => setRescheduleTime(event.target.value)} required>{rescheduleTimes.map((slot) => <option key={slot} value={slot}>{slot}</option>)}</select></label>
-        <button type="submit" disabled={busyAppointment === appointment._id}>Save</button>
+        <label className="reschedule-reason">Reason<textarea value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} maxLength={500} required /></label>
+        <button type="submit" disabled={busyAppointment === appointment._id}>Send request</button>
         <button type="button" onClick={() => setReschedulingId('')}>Close</button>
       </form>}
     </article>
@@ -241,14 +260,82 @@ function DoctorDashboard({ auth, appointments, error, onLogout, onSaveAvailabili
   )
 }
 
+function PatientDashboard({ auth, appointments, error, onLogout, onBrowse, onRespondToReschedule }) {
+  const [busyAppointment, setBusyAppointment] = useState('')
+  const [actionError, setActionError] = useState('')
+  const orderedAppointments = [...appointments].sort((first, second) =>
+    first.date.localeCompare(second.date) || first.time.localeCompare(second.time))
+
+  const respondToReschedule = async (appointmentId, action) => {
+    setBusyAppointment(appointmentId)
+    setActionError('')
+    try {
+      await onRespondToReschedule(appointmentId, action)
+    } catch (requestError) {
+      setActionError(requestError.message)
+    } finally {
+      setBusyAppointment('')
+    }
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <a className="brand" href="#top"><span className="brand-mark">+</span><span>DocBook</span></a>
+        <span className="account-label">Patient account</span>
+        <button className="profile-button" type="button" onClick={onBrowse}>Find a doctor</button>
+        <button className="profile-button" type="button" onClick={onLogout}>Log out</button>
+      </header>
+      <main className="patient-dashboard" id="top">
+        <section className="welcome-section">
+          <div><p className="eyebrow">PATIENT DASHBOARD</p><h1>Welcome, {auth.user.name}<span>.</span></h1><p className="intro">View your upcoming visits and respond to doctor requests.</p></div>
+        </section>
+        {error && <p className="auth-error" role="alert">{error}</p>}
+        {actionError && <p className="auth-error" role="alert">{actionError}</p>}
+        <section className="patient-appointments" aria-label="Your appointments">
+          {orderedAppointments.length ? orderedAppointments.map((appointment) => {
+            const proposalPending = appointment.status === 'reschedule_requested'
+              && appointment.rescheduleRequest?.status === 'pending'
+            return (
+              <article className="appointment-row patient-appointment-row" key={appointment._id}>
+                <div className="appointment-person">
+                  <strong>{appointment.doctorName}</strong>
+                  <span>{appointment.specialty}</span>
+                  <span>Current appointment: {appointment.date} at {appointment.time}</span>
+                </div>
+                <span className={`appointment-status status-${appointment.status || 'pending'}`}>
+                  {appointmentStatusLabels[appointment.status] || 'Pending'}
+                </span>
+                {proposalPending && <div className="appointment-notice">
+                  <strong>New time proposed: {appointment.rescheduleRequest.proposedDate} at {appointment.rescheduleRequest.proposedTime}</strong>
+                  <span>Reason: {appointment.rescheduleRequest.reason}</span>
+                  <span>Your current appointment remains active unless you accept.</span>
+                  <div className="patient-reschedule-actions">
+                    <button type="button" disabled={busyAppointment === appointment._id} onClick={() => respondToReschedule(appointment._id, 'accept')}>Accept new time</button>
+                    <button type="button" disabled={busyAppointment === appointment._id} onClick={() => respondToReschedule(appointment._id, 'reject')}>Reject proposal</button>
+                  </div>
+                </div>}
+                {appointment.status !== 'cancelled' && appointment.rescheduleRequest?.status === 'rejected' && <p className="appointment-history-note">The proposed time was rejected. Your original appointment remains active.</p>}
+              </article>
+            )
+          }) : <p className="empty-state">You do not have any appointments yet.</p>}
+        </section>
+      </main>
+    </div>
+  )
+}
+
 function App() {
   const [query, setQuery] = useState('')
   const [auth, setAuth] = useState(readSavedSession)
+  const [showPatientDashboard, setShowPatientDashboard] = useState(() => readSavedSession()?.user?.role === 'patient')
   const [authPage, setAuthPage] = useState(null)
   const [authError, setAuthError] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
-  const [appointments, setAppointments] = useState([])
-  const [appointmentsError, setAppointmentsError] = useState('')
+  const [appointmentData, setAppointmentData] = useState({ userId: null, records: [] })
+  const [appointmentErrorData, setAppointmentErrorData] = useState({ userId: null, message: '' })
+  const appointments = auth?.user?.id === appointmentData.userId ? appointmentData.records : []
+  const appointmentsError = auth?.user?.id === appointmentErrorData.userId ? appointmentErrorData.message : ''
   const [doctors, setDoctors] = useState([])
   const [selectedDoctorState, setSelectedDoctor] = useState(null)
   const [selectedDate, setSelectedDate] = useState(() => createDateSelection(today))
@@ -296,16 +383,26 @@ function App() {
   }, [auth?.token])
 
   useEffect(() => {
-    if (!auth?.token || auth.user.role !== 'doctor') return
+    if (!auth?.token || !['doctor', 'patient'].includes(auth.user.role)) return
+
+    let active = true
     fetch('/api/appointments', { headers: { Authorization: `Bearer ${auth.token}` } })
       .then(async (response) => {
         const result = await response.json()
         if (!response.ok) throw new Error(result.message || 'Could not load appointments.')
         return result
       })
-      .then(setAppointments)
-      .catch((error) => setAppointmentsError(error.message))
-  }, [auth?.token, auth?.user?.role])
+      .then((result) => {
+        if (active) {
+          setAppointmentData({ userId: auth.user.id, records: result })
+          setAppointmentErrorData({ userId: auth.user.id, message: '' })
+        }
+      })
+      .catch((error) => {
+        if (active) setAppointmentErrorData({ userId: auth.user.id, message: error.message })
+      })
+    return () => { active = false }
+  }, [auth?.token, auth?.user?.id, auth?.user?.role])
 
   const filteredDoctors = doctors.filter((doctor) => `${doctor.name} ${doctor.specialty}`.toLowerCase().includes(query.toLowerCase()))
   const monthDates = Array.from(
@@ -331,6 +428,7 @@ function App() {
   const logout = () => {
     localStorage.removeItem('docbook-session')
     setAuth(null)
+    setShowPatientDashboard(false)
     setAuthPage(null)
   }
   const submitAuth = async (event) => {
@@ -354,6 +452,7 @@ function App() {
       }
       localStorage.setItem('docbook-session', JSON.stringify(result))
       setAuth(result)
+      setShowPatientDashboard(result.user.role === 'patient')
       setAuthPage(null)
     } catch (error) {
       setAuthError(error.message)
@@ -415,7 +514,22 @@ function App() {
     })
     const result = await response.json()
     if (!response.ok) throw new Error(result.message || 'Could not update appointment.')
-    setAppointments((current) => current.map((appointment) => appointment._id === result._id ? result : appointment))
+    setAppointmentData((current) => current.userId === auth.user.id
+      ? { ...current, records: current.records.map((appointment) => appointment._id === result._id ? result : appointment) }
+      : current)
+  }
+
+  const respondToReschedule = async (appointmentId, action) => {
+    const response = await fetch(`/api/appointments/${appointmentId}/reschedule-response`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + auth.token },
+      body: JSON.stringify({ action }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not respond to the reschedule request.')
+    setAppointmentData((current) => current.userId === auth.user.id
+      ? { ...current, records: current.records.map((appointment) => appointment._id === result._id ? result : appointment) }
+      : current)
   }
 
   if (window.location.pathname.replace(/\/$/, '') === '/admin') {
@@ -439,13 +553,17 @@ function App() {
     return <DoctorDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onSaveAvailability={saveAvailability} onAppointmentAction={updateAppointment} />
   }
 
+  if (auth?.user?.role === 'patient' && showPatientDashboard) {
+    return <PatientDashboard auth={auth} appointments={appointments} error={appointmentsError} onLogout={logout} onBrowse={() => setShowPatientDashboard(false)} onRespondToReschedule={respondToReschedule} />
+  }
+
   if (!selectedDoctor) {
     return <main className="app-shell"><p className="empty-state">{loadError || 'Loading doctors...'}</p></main>
   }
 
   return (
     <div className="app-shell">
-      <header className="topbar"><a className="brand" href="#top"><span className="brand-mark">+</span><span>DocBook</span></a><nav className="main-nav"><a className="active" href="#find-doctor">Find a doctor</a><a href="#appointments">My appointments</a><a href="#help">Help center</a></nav><button className="profile-button" type="button" onClick={() => auth ? logout() : openAuth()}>{auth ? 'Log out' : 'Log in / Sign up'}</button></header>
+      <header className="topbar"><a className="brand" href="#top"><span className="brand-mark">+</span><span>DocBook</span></a><nav className="main-nav"><a className="active" href="#find-doctor">Find a doctor</a><a href="#appointments">My appointments</a><a href="#help">Help center</a></nav>{auth?.user?.role === 'patient' && <button className="profile-button" type="button" onClick={() => setShowPatientDashboard(true)}>My appointments</button>}<button className="profile-button" type="button" onClick={() => auth ? logout() : openAuth()}>{auth ? 'Log out' : 'Log in / Sign up'}</button></header>
       <main id="top">
         <section className="welcome-section" id="find-doctor"><div><p className="eyebrow">{todayLabel}</p><h1>Good morning<span>.</span></h1><p className="intro">Find the right care for you today.</p></div><div className="trust-note"><span className="shield">✓</span> Your health, handled with care</div></section>
         <section className="search-panel"><div className="search-label">What kind of care do you need?</div><div className="search-row"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search doctors or specialties" aria-label="Search doctors or specialties" /></label><button className="location-button" type="button"><span>⌖</span> India <b>⌄</b></button><button className="search-button" type="button" onClick={() => document.querySelector('.doctor-grid')?.scrollIntoView({ behavior: 'smooth' })}>Search <span>→</span></button></div><div className="quick-links"><span>Popular:</span> <button type="button" onClick={() => setQuery('General physician')}>General physician</button><button type="button" onClick={() => setQuery('Dermatologist')}>Dermatology</button><button type="button" onClick={() => setQuery('Pediatrician')}>Pediatrics</button></div></section>
